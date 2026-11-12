@@ -75,7 +75,10 @@ def _client(path: Path) -> dict:
     ):
         raise GoogleSetupError("Download an OAuth client JSON of type Desktop app")
     # Never trust token/auth endpoints supplied by an arbitrary local JSON file.
-    if data.get("auth_uri") != AUTH_URL or data.get("token_uri") != TOKEN_URL:
+    # Google still downloads Desktop JSON with the original OAuth authorization URI.
+    # Accept both official variants, but always initiate consent through AUTH_URL below.
+    official_auth_uris = {AUTH_URL, "https://accounts.google.com/o/oauth2/auth"}
+    if data.get("auth_uri") not in official_auth_uris or data.get("token_uri") != TOKEN_URL:
         raise GoogleSetupError("Desktop OAuth JSON must use the official Google endpoints")
     return data
 

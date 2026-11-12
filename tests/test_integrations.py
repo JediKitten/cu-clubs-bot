@@ -200,6 +200,24 @@ def test_oauth_client_rejects_web_and_non_google_endpoints(tmp_path):
         google._client(path)
 
 
+@pytest.mark.parametrize("auth_uri", [google.AUTH_URL, "https://accounts.google.com/o/oauth2/auth"])
+def test_oauth_accepts_official_desktop_client_downloads(tmp_path, auth_uri):
+    path = tmp_path / "client.json"
+    path.write_text(
+        json.dumps(
+            {
+                "installed": {
+                    "client_id": "synthetic-desktop-client",
+                    "client_secret": "synthetic-secret",
+                    "auth_uri": auth_uri,
+                    "token_uri": google.TOKEN_URL,
+                }
+            }
+        )
+    )
+    assert google._client(path)["client_id"] == "synthetic-desktop-client"
+
+
 def test_pkce_s256_known_transform():
     verifier = "a" * 64
     expected = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=")
