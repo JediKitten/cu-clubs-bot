@@ -9,8 +9,13 @@ RUN uv sync --frozen --no-dev --no-editable
 FROM python:3.12-slim
 ENV PATH="/app/.venv/bin:$PATH" PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
 WORKDIR /app
-RUN groupadd --system app && useradd --system --gid app --home /app app
+RUN apt-get update && apt-get install --no-install-recommends -y postgresql-client \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --system app && useradd --system --gid app --home /app app \
+    && mkdir /backups && chown app:app /backups
 COPY --from=builder --chown=app:app /app/.venv /app/.venv
+COPY --chown=app:app alembic.ini ./
+COPY --chown=app:app migrations ./migrations
 USER app
 EXPOSE 8000
 CMD ["cu-clubs", "api"]

@@ -1,18 +1,21 @@
-"""Stage 0 HTTP application: health checks and the generated OpenAPI document."""
+"""HTTP health checks and authenticated, durable Telegram webhook ingestion."""
 
 import asyncio
 import logging
+import secrets
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from cu_clubs import __version__
 from cu_clubs.config import Settings
+from cu_clubs.models import TelegramUpdate
 
 logger = logging.getLogger(__name__)
 
@@ -28,17 +31,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             connect_args={"connect_timeout": 2},
         )
         app.state.db_engine = engine
+        app.state.sessions = async_sessionmaker(engine, expire_on_commit=False)
         try:
             yield
         finally:
             await engine.dispose()
 
     app = FastAPI(
-        title="CU Clubs — foundation",
+        title="CU Clubs",
         version=__version__,
         description=(
-            "Stage 0 application foundation. Only health checks are implemented. "
-            "Club, event, Telegram and integration workflows are planned."
+            "Initial club profiles and Telegram adapter. "
+            "Event registration and club integration API are under development."
         ),
         lifespan=lifespan,
     )
@@ -64,5 +68,38 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             logger.warning("PostgreSQL readiness check failed")
             return JSONResponse(status_code=503, content={"status": "not_ready"})
         return JSONResponse(content={"status": "ready"})
+
+    @app.post("/telegram/webhook", include_in_schema=False)
+    async def telegram_webhook(request: Request) -> dict[str, bool]:
+        expected = config.telegram_webhook_secret
+        supplied = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+        if (
+            not config.external_delivery_enabled
+            or not expected
+            or not secrets.compare_digest(expected.get_secret_value(), supplied)
+        ):
+            raise HTTPException(status_code=403, detail="Webhook access denied")
+        # Reject oversized bodies before JSON decoding; never log raw updates or secrets.
+        body = bytearray()
+        async for chunk in request.stream():
+            body.extend(chunk)
+            if len(body) > 1024 * 1024:
+                raise HTTPException(status_code=413, detail="Update is too large")
+        import json
+
+        try:
+            payload = json.loads(body)
+        except (ValueError, UnicodeDecodeError) as exc:
+            raise HTTPException(status_code=400, detail="Invalid JSON") from exc
+        update_id = payload.get("update_id") if isinstance(payload, dict) else None
+        if isinstance(update_id, bool) or not isinstance(update_id, int) or update_id < 0:
+            raise HTTPException(status_code=422, detail="Invalid update ID")
+        async with app.state.sessions() as session, session.begin():
+            await session.execute(
+                insert(TelegramUpdate)
+                .values(update_id=update_id, payload=payload)
+                .on_conflict_do_nothing(index_elements=[TelegramUpdate.update_id])
+            )
+        return {"ok": True}
 
     return app

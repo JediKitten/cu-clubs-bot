@@ -35,6 +35,7 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["src"]
 markers = ["integration: requires a real PostgreSQL database via TEST_DATABASE_URL"]
 
 [tool.ruff]

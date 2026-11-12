@@ -1,0 +1,58 @@
+# Тестовый сервер
+
+Экземпляр работает отдельно от существующих проектов: Compose project
+`cu-clubs-test`, собственные контейнеры API/worker/PostgreSQL и тома database/backups.
+Основной файл — `compose.server.yaml`. Адрес SSH и реальные секреты хранятся вне Git.
+
+API слушает только `127.0.0.1:8310` на сервере; порт PostgreSQL не публикуется.
+Общий Caddy и другие сервисы не изменяются. Первоначальный транспорт Telegram —
+polling, поскольку текущий пользователь не может изменить Caddy без sudo-пароля.
+Webhook-обработчик уже существует и использует ту же входящую очередь.
+
+## Первая установка
+
+Загрузить проверенный коммит в отдельный `~/cu-clubs-bot`, создать `.env` с правами
+`600`. Обязательны уникальный POSTGRES_PASSWORD, bot token/username, webhook secret
+не короче 32 символов, numeric admin/leader IDs. Для первого теста transport=polling.
+Реальные значения не выводить через `docker compose config` или `docker inspect`.
+
+```sh
+docker compose -f compose.server.yaml build
+docker compose -f compose.server.yaml up -d db
+docker compose -f compose.server.yaml run --rm --no-deps api cu-clubs migrate
+docker compose -f compose.server.yaml run --rm --no-deps api cu-clubs bootstrap
+docker compose -f compose.server.yaml up -d api worker
+curl --fail http://127.0.0.1:8310/health/ready
+```
+
+Повтор bootstrap не создаёт второй клуб и не сбрасывает заполненную карточку.
+Первое уведомление остаётся в outbox. Если чат ещё недоступен, после `/start`
+разрешается повтор задачи, завершённой ошибкой доступа к личному чату.
+
+## Обновление
+
+Сначала сохранить резервную копию, загрузить новый проверенный коммит без `.env`
+и credentials, собрать образ, выполнить migrate и затем пересоздать только свои
+API/worker. Команда `down -v` для обновления не используется.
+
+## Проверка
+
+- `/health/live` и `/health/ready` отвечают 200; оба процесса healthy.
+- Токен на старте worker проверен по настроенному username.
+- `club.created` имеет статус `sent` и Telegram message_id после доставки владельцу.
+- Строка Telegram update сохраняется до подтверждения polling offset; повтор
+  одного update_id не создаёт вторую входящую задачу.
+- Восстановление диалога из PostgreSQL и отзыв прав проверяются тестами.
+- Архивы custom dump хранятся в томе backups; отправка очередной копии фиксируется
+  в outbox. Файлы автоматически не удаляются.
+
+Проверка восстановления выполняется в отдельной временной БД без worker и
+внешних доставок. Факт успешной отправки файла сам по себе не проверяет восстановление.
+
+## Переход на webhook
+
+После отдельной настройки HTTPS route установить transport=webhook,
+TELEGRAM_WEBHOOK_URL и общий секрет входящего заголовка; остановить polling worker,
+выполнить `cu-clubs webhook`, затем запустить worker. Pending updates не сбрасываются.
+Секрет нельзя включать в URL или логи. Восстановленная тестовая среда запускается
+с external_delivery_enabled=false и не подключается к рабочему боту.

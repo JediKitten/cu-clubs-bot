@@ -22,7 +22,7 @@ def test_admin_ids_accept_only_numeric_ids_from_environment(monkeypatch) -> None
 
 
 def test_external_delivery_fails_closed() -> None:
-    with pytest.raises(ValidationError, match="External delivery is unavailable"):
+    with pytest.raises(ValidationError, match="requires a Telegram token"):
         Settings(_env_file=None, external_delivery_enabled=True)
 
 

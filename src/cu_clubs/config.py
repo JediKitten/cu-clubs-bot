@@ -29,28 +29,35 @@ class Settings(BaseSettings):
     readiness_timeout_seconds: float = Field(default=3.0, gt=0, le=30)
     timezone: str = "Europe/Moscow"
 
-    # Numeric IDs only. These are configuration for a future explicit bootstrap command.
-    # Loading Settings does not assign roles or write users to the database.
+    # Numeric IDs only. Loading Settings never assigns roles or writes to the database.
     bootstrap_admin_ids: list[PositiveInt] = Field(default_factory=list)
+    bootstrap_leader_telegram_id: PositiveInt | None = None
 
     external_delivery_enabled: bool = False
     telegram_bot_token: SecretStr | None = None
     telegram_webhook_secret: SecretStr | None = None
+    telegram_bot_username: str | None = None
+    telegram_webhook_url: str | None = None
+    telegram_transport: Literal["webhook", "polling"] = "webhook"
 
     smtp_host: str | None = None
     smtp_port: int = Field(default=587, ge=1, le=65535)
     smtp_username: str | None = None
     smtp_password: SecretStr | None = None
     smtp_sender: str | None = None
+    smtp_use_ssl: bool = False
+    smtp_starttls: bool = True
 
     google_auth_mode: Literal["oauth", "service_account"] = "oauth"
     google_credentials_path: Path | None = None
     google_spreadsheet_id: str | None = None
     google_sheet_name: str = "Calendar 2026"
 
-    # Configuration only: stage 0 has no scheduler or backup delivery implementation.
+    # Daily backup time is interpreted in the configured timezone.
     backup_recipient_telegram_id: PositiveInt | None = None
     backup_cron: str = "0 3 * * *"
+    backup_directory: Path = Path("backups")
+    backups_enabled: bool = False
 
     @field_validator("database_url")
     @classmethod
@@ -73,10 +80,17 @@ class Settings(BaseSettings):
         return value
 
     @model_validator(mode="after")
-    def reject_external_delivery_in_stage_zero(self) -> Self:
+    def validate_delivery_credentials(self) -> Self:
         if self.external_delivery_enabled:
-            raise ValueError(
-                "External delivery is unavailable in stage 0; "
-                "keep CU_CLUBS_EXTERNAL_DELIVERY_ENABLED=false"
-            )
+            if not self.telegram_bot_token or not self.telegram_bot_username:
+                raise ValueError("External delivery requires a Telegram token and bot username")
+            if (
+                not self.telegram_webhook_secret
+                or len(self.telegram_webhook_secret.get_secret_value()) < 32
+            ):
+                raise ValueError("External delivery requires a webhook secret of at least 32 chars")
+        if self.backups_enabled and (
+            not self.external_delivery_enabled or not self.backup_recipient_telegram_id
+        ):
+            raise ValueError("Backups require external delivery and a numeric recipient ID")
         return self
