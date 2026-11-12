@@ -1,0 +1,653 @@
+bot_started: |-
+  <i>🚀 Бот перезапущен</i>
+  
+  <b><u>Информация о новой версии</u></b>
+  <i>Название:</i> {{.Name}}
+  <i>Дата сборки:</i> {{.BuildDate}}
+  <i>Дата запуска:</i> {{.StartTime}}
+  
+  {{if .URL}}<a href="{{.URL}}">Подробнее</a>{{end}}
+
+start: |-
+  <b>Воспользуйтесь кнопкой ниже для перехода к главному меню</b>
+write_start: |-
+  <b>◽️ Готово! Пропишите /start</b>
+back: ← Назад
+banned: ❌ Вы забанены в этом боте
+correct: ✅ Верно
+incorrect: ❌ Неверно
+show_in_menu: ✅ Показывать в меню
+not_show_in_menu: ❌ Не показывать в меню
+loading: ⏳
+unknown_command: <i>❓ Неизвестная команда, пропишите “/start”</i>
+confirm: ✅ Подтвердить
+cancel: ❌ Отменить
+hide: ❌ Скрыть
+delete: 🗑 Удалить
+skip: ➡️ Пропустить
+technical_issues: |-
+  <b>❌ Возникла непредвиденная техническая ошибка</b>
+
+  <i>Обратитесь в поддержку</i>
+next: |-
+  >
+prev: |-
+  <
+over: ⌛️
+tick: ✅
+cross: ❌
+# error
+input_error: |-
+  <b>Во время ввода произошла непредвиденная ошибка</b>
+input_should_be_callback: |-
+  <b>Ответ не должен содержать текст, используйте кнопки</b>
+
+auth_required: |-
+  Вы ещё не авторизованы ❌
+
+  <i>Пожалуйста, пропишите /start для авторизации</i>
+grant_user_required: Вы не находитесь в чате грантовиков ❌
+resend: Отправить повторно
+resend_timeout: |-
+  Код можно отправить раз в {{.}} минут.
+resend_timeout_with_time_before_resend: |-
+  Код можно будет отправить через {{.}} минут
+session_expire: Сессия устарела, начините регистрацию сначала /start.
+wrong_code: |-
+  <b>Неверный код</b>, возможно вы перешли по ссылке в устаревшем письме
+something_went_wrong: Что-то пошло не так, начните сначала /start.
+
+# logging
+log: |-
+  ❗️ <b>{{.Level.String}}</b> - <code>{{.Timestamp.Format "2006-01-02 15:04:05"}}</code>
+  <blockquote><b>{{.LoggerName}} - {{.Caller}}:</b>
+
+  {{.Message}}</blockquote>
+
+# personal data agreement menu
+personal_data_agreement_text: |-
+  Соглашения — https://telegra.ph/Soglashenie-02-09-4
+  
+  Чтобы продолжить работу с ботом <b>нажмите «Согласен»</b>
+accept: Согласен
+decline: Не согласен
+decline_personal_data_agreement_text: |-
+  <b>Далее работать с ботом без вашего соглашения невозможно.</b>{{"\n"}}{{"\n"}}Для перезапуска бота напишите — /start
+
+# authorization menu
+auth_menu_text: |-
+  <b>Пожалуйста, выберите ваш статус для авторизации:</b>
+external_user: Внешний пользователь
+grant_user: Грантовик
+student: Студент
+fio_request: |-
+  <b>Пожалуйста, введите ваши ФИО.</b>
+
+  <i>Пример: Иванов Иван Иванович</i>
+invalid_user_fio: |-
+  <b>ФИО должно быть в формате: Иванов Иван Иванович.</b>
+
+  <i>Попробуйте ещё раз</i>
+email_request: |-
+  <b>Пожалуйста, укажите вашу студенческую почту.</b>
+invalid_email: |-
+  <b>Некорректный почтовый адрес.</b>
+
+  <i>Попробуйте ещё раз</i>
+user_with_this_email_already_exists: |-
+  <b>Пользователь с данной почтой уже существует.</b>
+
+  <i>Попробуйте ещё раз</i>
+email_auth_link_sent: |-
+  <b>На вашу почту была отправлена ссылка! Пожалуйста, перейдите по ней для завершения авторизации</b>
+email_auth_link_resent: |-
+  <b>Ссылка на вашу почту была отправлена ещё раз! Пожалуйста, перейдите по ней для завершения авторизации</b>
+  
+  <i>Если письмо не приходит - напишите @nlypage</i>
+# main menu
+main_menu_text: |-
+  <b>Главное меню</b>
+events: Мероприятия
+events_list_btn: Список мероприятий
+cu_clubs: Клубы ЦУ
+club_about: О клубе
+personal_account: Личный кабинет
+personal_account_text: |- 
+  <i>Добро пожаловать {{.Name}}, ваша роль <b>{{if eq .Role "student"}}студент{{else if eq .Role "grant_user"}}абитуриент{{else if eq .Role "external_user"}}внешний пользователь{{else}}не определена{{end}}</b></i>
+change_role: Изменить роль
+change_role_confirmation: |-
+  Вы <b>уверены</b> что хотите сменить свою роль?
+change_role_text: |-
+  <b>Выберите вашу новую роль</b>
+
+my_events: Мои мероприятия
+my_clubs: Мои клубы
+admin_menu: Админ-меню
+qr: QR-код
+qr_text: Ваш QR-код для посещения мероприятий
+event_qr_text: |-
+  <b>QR-код мероприятия</b>
+  
+  Пользователи могут отсканировать данный QR-код чтобы подтвердить посещение мероприятия
+  
+  <i>QR-код могут отсканировать даже не зарегистрированные на мероприятие пользователи</i>
+
+# user
+
+cu_clubs_list: Список клубов ЦУ
+cu_club_text: |-
+  Клуб: <b>{{html .Club.Name}}</b>
+  
+  <b>Описание:</b>
+  <blockquote>{{if .Club.Description}}{{html .Club.Description}}{{else}}<i>Не указано</i>{{end}}</blockquote>
+
+  <b>Ссылка на чат/канал клуба:</b>
+  {{if .Club.Link}}{{html .Club.Link}}{{else}}Не указана{{end}}
+events_list: |-
+  <b>Список мероприятий</b>
+event_text: |-
+  <b>{{.Name}}</b>
+  <i>Клуб</i>: {{html .ClubName}}
+
+  <b>Описание:</b>
+  <blockquote>{{if .Description}}{{html .Description}}{{else}}<i>Не указано</i>{{end}}</blockquote>
+  <b>Локация:</b> {{html .Location}}
+
+  <b>Начало:</b> {{.StartTime}}
+  <b>Окончание:</b> {{if .EndTime}}{{.EndTime}}{{else}}<i>Не указано</i>{{end}}
+  <b>Завершение регистрации:</b> {{.RegistrationEnd}}
+  <b>Количество участников:</b> {{if .MaxParticipants}}{{.ParticipantsCount}}/{{.MaxParticipants}}{{else}}<i>Не ограничено</i>{{end}}
+
+  {{if .IsRegistered}}{{if .AfterRegistrationText}}<b>Текст после регистрации:</b>
+  <blockquote>{{html .AfterRegistrationText}}</blockquote>{{end}}{{end}}
+register: Зарегистрироваться
+cancel_registration: ❌ Отменить регистрацию
+registration_ended: |-
+  К сожалению, регистрация на это мероприятие завершена
+max_participants_reached: |-
+  К сожалению, максимальное количество участников достигнуто
+not_allowed_role: |-
+  К сожалению, для вашей роли это мероприятие недоступно
+user_not_subscribed: |-
+  Для участия в мероприятиях подпишитесь на канал клуба @{{.ChannelName}}
+registered: ✅ Вы зарегистрированы
+my_events_list: |-
+  <b>Список мероприятий, на которые вы регистрировались</b>
+event_export: Экспорт в календарь
+event_exported_text: |-
+  Файл <code>{{.FileName}}</code> содержит информацию о мероприятии
+  
+  <i>Импортируйте его в ваш календарь</i>
+event_over: ⌛️ Мероприятие прошло
+my_event_text: |-
+  <b>{{.Name}}</b>
+  <i>Клуб</i>: {{html .ClubName}}
+
+  <b>Описание:</b>
+  <blockquote>{{if .Description}}{{html .Description}}{{else}}<i>Не указано</i>{{end}}</blockquote>
+  <b>Локация:</b> {{html .Location}}
+
+  <b>Начало:</b> {{.StartTime}}
+  <b>Окончание:</b> {{if .EndTime}}{{.EndTime}}{{else}}<i>Не указано</i>{{end}}
+  <b>Завершение регистрации:</b> {{.RegistrationEnd}}
+  <b>Количество участников:</b> {{if .MaxParticipants}}{{.ParticipantsCount}}/{{.MaxParticipants}}{{else}}<i>Не ограничено</i>{{end}}
+  {{if .AfterRegistrationText}}
+  <b>Текст после регистрации:</b>
+  <blockquote>{{html .AfterRegistrationText}}</blockquote>
+  {{end}}
+  {{if .IsOver}}<i>⌛️ Мероприятие прошло</i>{{end}}
+  {{if .IsVisited}}<b>✅ Вы посетили мероприятие</b>{{else}}{{if .IsOver}}<i>❌ Вы не посетили мероприятие</i>{{end}}{{end}}
+
+#club owner menu
+no_clubs: |-
+  <b>У вас нет ни одного клуба</b>
+my_clubs_list: |-
+  <b>Список ваших клубов</b>
+
+  <i>Всего:</i> <b>{{.}}</b>
+club_owner_club_menu_text: |-
+  Клуб: <b>{{html .Club.Name}}</b>
+  
+  <u>Организаторы:</u>
+  {{if .Owners}}{{range .Owners}}- <b>{{html .FIO}}</b> (@{{.Username}}){{"\n"}}{{end}}{{else}}<i>- Отсутствуют</i>{{"\n"}}{{end}}
+  <b>Описание:</b>
+  <blockquote>{{if .Club.Description}}{{html .Club.Description}}{{else}}<i>Не указано</i>{{end}}</blockquote>
+  
+  <b>Ссылка на чат/канал клуба:</b>
+  {{if .Club.Link}}{{html .Club.Link}}{{else}}Не указано{{end}}
+
+club_settings: Настройки
+club_settings_text: |-
+  Настройки клуба <b>{{html .Club.Name}}</b>
+
+  <u>Организаторы:</u>
+  {{if .Owners}}{{range .Owners}}- <b>{{html .FIO}}</b> (id: <code>{{.UserID}}</code>){{"\n"}}{{end}}{{else}}<i>- Отсутствуют</i>{{"\n"}}{{end}}
+  <b>Описание:</b>
+  <blockquote>{{if .Club.Description}}{{html .Club.Description}}{{else}}<i>Не указано</i>{{end}}</blockquote>
+  
+  <b>Ссылка на чат/канал клуба:</b>
+  {{if .Club.Link}}<code>{{html .Club.Link}}</code>{{else}}Не указано{{end}}
+
+warnings: Уведомления
+subscription_access: Доступ по подписке
+subscription_access_text: |-
+  Настройки обязательной подписки на канал клуба для регистрации на мероприятия.
+  
+  Канал, на который необходимо подписаться: {{ if .ChannelName }}@{{ .ChannelName }}{{ else }}Не установлен{{end}}
+  
+  ❗️Важно❗️
+  Для корректной работы требуется:
+  - Канал клуба должен быть публичным
+  - Необходимо добавить @cu_clubs_bot в канал и выдать ему права администратора
+  - Необходимо указать именно ID канала, добавив вначало -100
+  При возникновении вопросов обратиться к @uikola
+
+subscription_access_not_allowed: |-
+  Данная функция доступна для клубов, вышедших на seed. Если вы уже достигли данного уровня,
+  то обратитесь к администратору
+warnings_text: |-
+  <b>Настройка уведомлений клуба</b>
+
+profile: Профиль
+profile_text: |-
+  <b>Настройка профиля клуба</b>
+
+set_club_name: Установить название
+club_name_set: <b>Название клуба успешно установлено ✅</b>
+set_club_description: Установить описание
+input_club_description: |-
+  <b>Введите описание клуба</b>
+invalid_club_description: |-
+  <b>Описание клуба должно быть не более 500 символов</b>
+club_description_set: <b>Описание клуба успешно установлено ✅</b>
+set_club_link: Установить ссылку на канал/чат клуба
+input_club_link: |-
+  <b>Укажите ссылку на канал/чат клуба</b>
+invalid_club_link: |-
+  <b>Ссылка должна быть корректной и не более 100 символов</b>
+club_link_set: <b>Ссылка на канал/чат клуба успешно установлено ✅</b>
+set_club_avatar: Установить аватар
+input_club_avatar: |-
+  <b>Отправьте аватар клуба</b>
+invalid_club_avatar: |-
+  <b>Некорректный аватар, аватар должен быть фотографией, а не файлом</b>
+club_avatar_set: |-
+  <b>Аватар клуба успешно установлен ✅</b>
+set_club_intro: Установить интро
+input_club_intro: |-
+  <b>Отправьте интро-кружок клуба</b>
+invalid_club_intro: |-
+  <b>Некорректное интро, интро должно быть кружком</b>
+club_intro_set: |-
+  <b>Интро клуба успешно установлено</b>
+set_channel_id: Установить ID канала
+input_channel_id: |-
+  <b>Отправьте id канала, на который пользователям необходимо подписаться</b>
+invalid_channel_id: |-
+  <b>Некорректный id канала, проверьте, всё ли вы сделали правильно</b>
+channel_id_set: |-
+  <b>ID канала успешно установлено</b>
+
+create_event: Создать мероприятие
+club_events: Мероприятия
+
+input_event_name: |-
+  <b>Введите название мероприятия</b>  (От 5 до 45 символов)
+
+invalid_event_name: |-
+  <b>Название мероприятия должно содержать от 5 до 45 символов. Попробуйте еще раз</b>
+
+input_event_description: |-
+  <b>Добавим описание к мероприятию!</b>  
+  Опишите его в нескольких словах (до 250 символов).
+invalid_event_description: |-
+  <b>Описание слишком длинное!</b>  
+  Описание должно быть не более 250 символов. Попробуйте еще раз.
+
+input_event_location: |-
+  <b>Введите название локации</b>  
+  
+  Внимание: Если вы хотите провести мероприятие в кампусе ЦУ, то обязательно укажите в локации проведения "Гашека 7", иначе мы не поймём, что вам нужны пропуска
+
+  <b>Популярные варианты:  </b>
+  — <code>Кампус ЦУ — Гашека 7</code>  
+  — <code>Онлайн</code>
+invalid_event_location: |-
+  <b>Название локации должно содержать от 5 до 75 символов. Попробуйте еще раз.</b>
+
+input_event_start_time: |-
+  <b>Когда начнется мероприятие?</b>  
+
+  Введите дату и время в формате: <code>DD.MM.YYYY HH:MM</code>  
+  Например: <code>25.02.2025 18:30</code>
+invalid_event_start_time: |-
+  <b>Некорректная дата или время</b>  
+
+  Формат: <code>DD.MM.YYYY HH:MM</code>  (например, <code>25.02.2025 18:30</code>)  
+  — Дата должна быть не раньше, чем через сутки от текущей даты. 
+  — Время указывается в 24-часовом формате.
+
+input_event_end_time: |-
+  <b>Когда мероприятие завершится?</b>  
+
+  Введите дату и время в формате: <code>DD.MM.YYYY HH:MM</code>
+  Например: <code>25.02.2025 20:00</code>
+
+invalid_event_end_time: |-
+  <b>Некорректная дата или время</b>  
+    
+  Формат: <code>DD.MM.YYYY HH:MM</code> (например, <code>25.02.2025 20:00</code>)  
+  — Дата окончания должна быть позже даты начала мероприятия.  
+  — Время указывается в 24-часовом формате.
+
+input_event_registered_end_time: |-
+  <b>До какого времени можно зарегистрироваться?</b>  
+  Введите дату и время в формате: <code>DD.MM.YYYY HH:MM</code>
+  Например: <code>24.02.2025 18:00</code>  
+
+  <i>Максимальное время регистрации: <code>{{.MaxRegisteredEndTime}}</code> </i>
+invalid_event_registered_end_time: |-
+  <b>Некорректная дата или время</b>  
+
+  Формат: <code>DD.MM.YYYY HH:MM</code> (например, <code>24.02.2025 18:00</code>)  
+  — Максимальное время регистрации: <code>{{.MaxRegisteredEndTime}}</code>
+  — Дата окончания регистрации должна быть позже текущей даты минимум на 1 час.
+  — Время указывается в 24-часовом формате.
+
+input_after_registration_text: |-
+  <b>Какое сообщение увидят пользователи после регистрации?</b>  
+
+  Введите текст (от 10 до 150 символов).  
+  Например: <code>"Вот какая-то очень важная для тебя инфа ..."</code>
+
+invalid_after_registration_text: |-
+  <b>Текст должен содержать от 10 до 150 символов</b>
+
+input_max_participants: |-
+  <b>Введите количество участников, которые могут зарегистрироваться</b>  
+
+  Если ограничений нет — введите <code>0</code>.
+invalid_max_participants: |-
+  <b>Количество участников должно быть целым неотрицательным числом.  </b>
+
+input_expected_participants: |-
+  <b>Введите сколько участников вы ожидаете</b>  
+
+  Если ограничений нет — введите <code>0</code>
+  <i>Если количество регистраций превысит это число, вы получите уведомление.  </i>
+invalid_expected_participants: |-
+  <b>Ожидаемое количество участников должно быть целым неотрицательным числом</b>
+
+event_confirmation: |-
+  <b>Подтверждение данных мероприятия</b>
+
+  <b>Название:</b> {{html .Name}}
+  <b>Описание:</b> {{if .Description}}{{html .Description}}{{else}}<i>Не указано</i>{{end}}
+  <b>Локация:</b> {{html .Location}}
+
+  <b>Начало:</b> {{.StartTime}}
+  <b>Окончание:</b> {{if .EndTime}}{{.EndTime}}{{else}}<i>Не указано</i>{{end}}
+  <b>Завершение регистрации:</b> {{.RegistrationEnd}}
+
+  <b>Максимальное количество участников:</b> {{if .MaxParticipants}}{{.MaxParticipants}}{{else}}<i>Не ограничено</i>{{end}}
+  <b>Ожидаемое количество участников:</b> {{if .ExpectedParticipants}}{{.ExpectedParticipants}}{{else}}<i>Не указано</i>{{end}}
+
+  <b>Текст после регистрации:</b>
+  <blockquote>{{if .AfterRegistrationText}}{{html .AfterRegistrationText}}{{else}}<i>Не указан</i>{{end}}</blockquote>
+
+  <b>Всё верно?</b>
+
+  <i>Выберите роли, которым будет доступно это мероприятие:</i>
+
+create: Создать
+refill: Заполнить заново
+event_without_allowed_roles: |-
+  Создать мероприятие без доступных ролей невозможно.
+event_created: |-
+  <b>Мероприятие {{.Name}} успешно создано</b>
+
+event_settings: Настройки
+event_users: Пользователи
+club_owner_event_text: |-
+  Мероприятие <b>{{html .Name}}</b>
+  <b>Описание:</b>
+  <blockquote>{{if .Description}}{{html .Description}}{{else}}<i>Не указано</i>{{end}}</blockquote>
+  <b>Локация:</b> {{html .Location}}
+  
+  <b>Начало:</b> {{.StartTime}}
+  <b>Окончание:</b> {{if .EndTime}}{{.EndTime}}{{else}}<i>Не указано</i>{{end}}
+  <b>Завершение регистрации:</b> {{.RegistrationEnd}}
+  <b>Максимальное количество участников:</b> {{if .MaxParticipants}}{{.MaxParticipants}}{{else}}<i>Не ограничено</i>{{end}}
+  
+  <b>Зарегистрировались:</b> {{.ParticipantsCount}}/{{if .MaxParticipants}}{{.MaxParticipants}}{{else}}∞{{end}}
+  
+  <b>Посетили: {{.VisitedCount}}</b>
+  
+  <b>Текст после регистрации:</b>
+  <blockquote>{{if .AfterRegistrationText}}{{html .AfterRegistrationText}}{{else}}<i>Не указан</i>{{end}}</blockquote>
+
+  <b>Ссылка на мероприятие:</b> <code>{{.Link}}</code>
+
+edit_after_reg_text: |-
+  Изменить текст после регистрации
+edit_max_participants: |-
+  Изменить макс. кол-во пользователей
+
+input_edit_max_participants: |-
+  <b>Введите новое максимальное количество регистраций. </b>  
+
+  Если ограничений нет — введите <code>0</code>.  
+  <i> Новое значение должно быть больше текущего лимита </i>
+invalid_edit_max_participants: |-
+  <b>Максимальное количество участников должно быть неотрицательным числом  
+  и превышать текущее ограничение</b>
+
+event_name_changed: |-
+  <b>Название мероприятия успешно изменено ✅</b>
+event_description_changed: |-
+  <b>Описание мероприятия успешно изменено ✅</b>
+event_after_registration_text_changed: |-
+  <b>Текст после регистрации на мероприятия успешно изменён ✅</b>
+event_max_participants_changed: |-
+  <b>Максимальное число пользователей на регистрацию успешно изменено ✅</b>
+
+delete_event_text: |-
+  Вы уверены, что хотите удалить мероприятие <b>{{html .Name}}</b>
+event_deleted: |-
+  Мероприятие <b>{{html .Name}}</b> успешно удален ✅
+
+registered_users_text: |-
+  Список пользователей, зарегистрированных на мероприятие
+pass_users:
+  Список пользователей на получение пропусков
+
+qr_not_allowed: |-
+  <b>QR-коды для этого клуба не доступны</b>
+qr_expired: |-
+  <b>QR-код устарел</b>
+self_qr_error: |-
+  <b>Вы не можете активировать свой QR-код</b>
+event_started: |-
+  <b>Мероприятие уже началось</b>
+
+  <i>QR-код можно активировать не позднее чем в течение дня после начала мероприятия.</i>
+event_started_alert: Мероприятие уже началось
+qr_clubs_list: |-
+  <u><b>Активация QR-кода</b></u>
+
+  <b>Участник:</b> {{.FIO}} (@{{.Username}})
+  <i>Выберите клуб</i>
+qr_events_list: |-
+  📸 <u><b>Активация QR-кода</b></u>
+
+  <b>Участник:</b> {{.FIO}} (@{{.Username}})
+  <i>Выберите мероприятие</i>
+qr_activated: |-
+  <u><b>QR-код успешно активирован</b></u>
+
+  <b>Участник:</b> {{.FIO}} (@{{.Username}})
+event_qr_activated: |-
+  <u><b>QR-код успешно активирован</b></u>
+
+  <b>Мероприятие:</b> {{.Name}}
+
+# mailing
+mailing: Рассылка
+mailing_registered_users: Зарегистрированные
+mailing_visited_users: Посетившие
+
+club_mailing: |-
+  Рассылка от клуба <b>{{html .ClubName}}</b>
+  
+  {{html .Text}}
+event_mailing: |-
+  Рассылка от клуба <b>{{html .ClubName}}</b> (<i>{{html .EventName}}</i>)
+
+  {{html .Text}}
+club_input_mailing: |-
+  <b>Введите сообщение для рассылки</b>
+  
+  <i>Сообщение получат пользователи которые хотя бы один раз регистрировались на ваше мероприятие</i>
+event_input_registered_mailing: |-
+  <b>Введите сообщение для рассылки</b>
+  
+  <i>Сообщение получат все пользователи, которые зарегистрировались на это мероприятие</i>
+event_input_visited_mailing: |-
+  <b>Введите сообщение для рассылки</b>
+  
+  <i>Сообщение получат все пользователи, которые посетили это мероприятие</i>
+invalid_mailing_text: |-
+  <b>Текст рассылки должен быть не длиннее 500 символов</b>
+  
+  <i>Попробуйте ещё раз</i>
+mailing_canceled:
+  <b>Рассылка отменена</b>
+mailing_sent:
+  <b>Рассылка успешно отправлена</b>
+club_owner_weekly_reminder: |-
+  <b>📅 Напоминание для организаторов клубов</b>
+
+  Не забудьте заполнить календарь мероприятий на следующую неделю до вечера воскресенья!
+
+  <a href="https://docs.google.com/spreadsheets/d/13wgwaYGiovRIFkboDnmRLfhR44NNNMktuPhdsyi-X48/edit?gid=2091647137#gid=2091647137">Открыть календарь</a>
+disable_mailing_from_this_club: Отключить рассылку от этого клуба
+enable_mailing_from_this_club: Включить рассылку от этого клуба
+
+# notifications
+event_notification_day: |-
+  <u><b>Напоминание о мероприятии!</b></u> 🔔
+  Завтра состоится мероприятие <b>{{html .Name}}</b>
+
+  <b>Локация:</b> {{html .Location}}
+  <b>Начало:</b> <code>{{.StartTime.Format "02.01.2006 15:04"}}</code>
+event_notification_hour: |-
+  <u><b>Напоминание о мероприятии!</b></u> 🔔
+  Через час состоится мероприятие <b>{{html .Name}}</b>
+
+  <b>Локация:</b> {{html .Location}}
+  <b>Начало:</b> <code>{{.StartTime.Format "02.01.2006 15:04"}}</code>
+
+event_notification_update: |-
+  <u><b>Уведомление о изменении мероприятия!</b></u> 🔔
+
+  {{if .OldName}}Название мероприятия <b>{{html .OldName}}</b> изменилось на: <b>{{html .Name}}</b>{{end}}{{if .Description}}Описание мероприятия <b>{{html .Name}}</b> изменилось на: <b>{{html .Description}}</b>{{end}}{{if .AfterRegistrationText}}Текст после регистрации на мероприятие <b>{{html .Name}}</b> изменился на: <b>{{html .AfterRegistrationText}}</b>{{end}}{{if .ParticipantsChanged}}Максимальное количество участников мероприятия <b>{{html .Name}}</b> изменилось на: <b>{{if .MaxParticipants}}{{.MaxParticipants}}{{else}}∞{{end}}</b>{{end}}
+event_notification_delete: |-
+  <u><b>Уведомление об отмене мероприятия!</b></u> 🔔
+
+  <b>Мероприятие {{html .Name}} отменено</b>
+
+# warnings
+expected_participants_reached_warning: |-
+  Мероприятие: <b>{{html .Name}}</b>
+  <b>Ожидаемое количество участников достигнуто</b>
+
+  <b>Количество участников: {{.ParticipantsCount}}</b>
+max_participants_reached_warning: |-
+  Мероприятие: <b>{{html .Name}}</b>
+  <b>Максимальное количество участников достигнуто</b>
+
+  <b>Количество участников: {{.dParticipantsCount}}</b>
+
+#admin menu
+admin_menu_text: |-
+  <b>Админ-меню:</b>
+
+user_not_found: |-
+  Пользователь с <b>ID {{.ID}}</b> не найден
+  {{.Text}}
+input_user_id: |-
+  Введите <b>ID</b> пользователя
+
+create_club: Создать клуб
+clubs: Клубы
+input_club_name: |-
+  <b>Введите название клуба</b>
+invalid_club_name: |-
+  <b>Название клуба должно быть не менее 3 и не более 30 символов</b>
+
+  <i>Попробуйте ещё раз</i>
+club_already_exists: |-
+  <b>Клуб с таким названием уже существует</b>
+club_created: |-
+  Клуб <b>{{html .Name}}</b> успешно создан!
+clubs_list: |-
+  <b>Список клубов</b>
+
+  <i>Всего:</i> <b>{{.}}</b>
+admin_club_menu_text: |-
+  Клуб: <b>{{html .Club.Name}}</b>
+
+  <u>Организаторы:</u>
+  {{if .Owners}}{{range .Owners}}- <b>{{html .FIO}}</b> (@{{.Username}} id: <code>{{.UserID}}</code>){{"\n"}}{{end}}{{else}}<i>- Отсутствуют</i>{{"\n"}}{{end}}
+  <b>Описание:</b>
+  <blockquote>{{if .Club.Description}}{{html .Club.Description}}{{else}}<i>Не указано</i>{{end}}</blockquote>
+qr_allowed: QR-код ивента
+subscription_require_allowed: Доступ по подписке
+club_deleted: |-
+  Клуб <b>{{html .Name}}</b> успешно удален
+add_club_owner: |-
+  Добавить организатора
+club_owner_added: |-
+  Организатор <b>{{html .User.FIO}}</b> (id: <code>{{.User.ID}}</code>) успешно добавлен в клуб <b>{{html .Club.Name}}</b>
+remove_club_owner: |-
+  Удалить организатора
+club_owner_removed: |-
+  Организатор <b>{{html .User.FIO}}</b> (id: <code>{{.User.ID}}</code>) успешно удалён из клуба <b>{{html .Club.Name}}</b>
+roles: |-
+  Роли
+manage_roles: |-
+  <b>Выберите роли к которым у клуба будет доступ</b>
+
+attendance_report: Отчёт по посещениям
+input_report_from_date: |-
+  <b>Введите дату начала периода</b>
+
+  <i>Формат: ДД.ММ.ГГГГ (например, 01.09.2026)</i>
+invalid_report_from_date: |-
+  <b>Некорректная дата</b>
+
+  <i>Формат: ДД.ММ.ГГГГ. Попробуйте ещё раз</i>
+input_report_to_date: |-
+  <b>Введите дату окончания периода</b>
+
+  Дата начала: <b>{{html .FromDate}}</b>
+  <i>Формат: ДД.ММ.ГГГГ</i>
+invalid_report_to_date: |-
+  <b>Некорректная дата окончания периода</b>
+
+  Дата должна быть не раньше <b>{{html .FromDate}}</b>
+  <i>Попробуйте ещё раз</i>
+report_empty: |-
+  <b>За период с {{html .FromDate}} по {{html .ToDate}} посещений не найдено</b>
+attendance_report_caption: |-
+  Отчёт по посещениям за период {{html .FromDate}} — {{html .ToDate}}
+
+user_banned: |-
+  <b>{{html .FIO}}</b> (id: <code>{{.ID}}</code>) успешно забанен
+user_unbanned: |-
+  <b>{{html .FIO}}</b> (id: <code>{{.ID}}</code>) успешно разбанен
+invalid_ban_data: |-
+  <b>Некорректные данные</b>
+  <i>Формат использования:</i> <code>/ban [id]</code>
+attempt_to_ban_self: |-
+  <b>Зачем ты пытаешься забанить самого себя? Не надо</b>

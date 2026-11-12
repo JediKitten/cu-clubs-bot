@@ -8,9 +8,9 @@ from types import SimpleNamespace
 import pytest
 from aiogram import Bot
 from aiogram.methods import AnswerCallbackQuery, GetMe, SendMessage, SendPhoto
-from aiogram.types import Update, User
+from aiogram.types import BufferedInputFile, Update, User
 
-from cu_clubs import telegram
+from cu_clubs import legacy, telegram
 from cu_clubs.services import PermissionDenied, ValidationError
 
 
@@ -139,6 +139,22 @@ class MemoryService:
         if not (p["is_admin"] or p["is_leader"]):
             raise PermissionDenied("Организаторами управляют лидер и администрация")
 
+    async def organizer_names(self, user_id, public_id):
+        if not any((await self.permissions(user_id, public_id)).values()):
+            raise PermissionDenied("Нет доступа к управлению этим клубом.")
+        return [
+            deepcopy(
+                self.db.people.get(
+                    person_id,
+                    {
+                        "full_name": str(person_id),
+                        "username": f"user_{person_id}",
+                    },
+                )
+            )
+            for person_id in sorted(self.db.leaders | self.db.flags.keys())
+        ]
+
     async def list_organizers(self, user_id, public_id):
         await self._team_access(user_id, public_id)
         return [
@@ -162,8 +178,8 @@ class MemoryService:
 
 
 class FakeBot(Bot):
-    def __init__(self, db):
-        super().__init__("123456:OFFLINE_TEST_ONLY_TOKEN")
+    def __init__(self, db, bot_id=123456):
+        super().__init__(f"{bot_id}:OFFLINE_TEST_ONLY_TOKEN")
         self.db = db
         self.sent = []
         self.answers = []
@@ -183,6 +199,11 @@ class FakeBot(Bot):
     @property
     def last(self):
         return self.sent[-1]
+
+    @property
+    def last_text(self):
+        method = self.last
+        return method.caption if isinstance(method, SendPhoto) else method.text
 
     def action(self, prefix):
         return next(
@@ -254,22 +275,156 @@ def test_navigation_subscription_share_and_honest_profile(interaction):
         await i.send(callback="clubs", user_id=104)
         assert i.bot.action("club:") == "club:cinema"
         await i.send(text="/start c_cinema", user_id=104)
-        assert "Киноклуб" in i.bot.last.text
+        assert "Киноклуб" in i.bot.last_text
         await i.send(callback=i.bot.action("subscribe:"), user_id=104)
         assert 104 in i.db.subscriptions
         await i.send(callback=i.bot.action("subscribe:"), user_id=104)
         assert 104 not in i.db.subscriptions
         await i.send(callback="share:cinema", user_id=104)
-        assert "https://t.me/offline_test_bot?start=c_cinema" in i.bot.last.text
+        assert "https://t.me/offline_test_bot?start=c_cinema" in i.bot.last_text
         await i.send(callback="profile", user_id=104)
-        assert "&lt;Actor&gt;" in i.bot.last.text
-        assert "Почта не подтверждена" in i.bot.last.text
+        assert "&lt;Actor&gt;" in i.bot.last_text
+        assert "Почта не подтверждена" in i.bot.last_text
         await i.send(callback="future:survey", user_id=104)
-        assert "ещё в разработке" in i.bot.last.text
+        assert "ещё в разработке" in i.bot.last_text
         await i.send(callback="share:missing", user_id=104)
-        assert "Постоянная ссылка" not in i.bot.last.text
+        assert "Постоянная ссылка" not in i.bot.last_text
         await i.send(callback="admin", user_id=104)
-        assert "только администраторам" in i.bot.last.text
+        assert "только администраторам" in i.bot.last_text
+
+    run(scenario())
+
+
+@pytest.mark.parametrize(
+    "update,role,caption",
+    [
+        ({"text": "/start"}, "menu", "<b>Главное меню</b>"),
+        ({"text": "/menu"}, "menu", "<b>Главное меню</b>"),
+        ({"callback": "menu"}, "menu", "<b>Главное меню</b>"),
+        ({"callback": "clubs"}, "clubs", "Список клубов ЦУ"),
+        (
+            {"callback": "manage"},
+            "club-owner",
+            "<b>Список ваших клубов</b>\n\n<i>Всего:</i> <b>1</b>",
+        ),
+        (
+            {"callback": "manageclub:cinema"},
+            "club-owner",
+            "Клуб: <b>Киноклуб</b>\n\n<u>Организаторы:</u>\n"
+            "- <b>&lt;Actor&gt;</b> (@any_name)\n- <b>102</b> (@user_102)\n"
+            "\n<b>Описание:</b>\n<blockquote><i>Не указано</i></blockquote>"
+            "\n\n<b>Ссылка на чат/канал клуба:</b>\nНе указано"
+            "\n\n<b>Уровень:</b> Seed",
+        ),
+        (
+            {"callback": "editmenu:cinema"},
+            "club-owner",
+            "<b>Настройка профиля клуба</b>\n\nКиноклуб",
+        ),
+        (
+            {"callback": "edit:cinema:name"},
+            "club-owner",
+            "<b>Введите название клуба</b>",
+        ),
+        (
+            {"callback": "profile"},
+            "personal-account",
+            "<i>Добро пожаловать &lt;Actor&gt;, ваша роль <b>не определена</b></i>"
+            "\n\nПочта не подтверждена.",
+        ),
+        ({"callback": "future:events"}, "events", telegram.UNAVAILABLE),
+        ({"callback": "future:mine"}, "personal-account", telegram.UNAVAILABLE),
+    ],
+)
+def test_shared_screens_send_original_banner_and_exact_caption(interaction, update, role, caption):
+    async def scenario():
+        i = interaction
+        await i.send(**update)
+        assert len(i.bot.sent) == 1
+        method = i.bot.last
+        assert isinstance(method, SendPhoto)
+        assert isinstance(method.photo, BufferedInputFile)
+        assert method.photo.filename == f"{role}.png"
+        assert method.photo.data == legacy.banner(role).data
+        assert method.caption == caption
+        assert method.parse_mode == "HTML"
+        assert method.reply_markup
+
+    run(scenario())
+
+
+def test_original_banner_file_ids_are_reused_only_for_same_bot_and_role(interaction):
+    class UploadBot(FakeBot):
+        async def __call__(self, method, request_timeout=None):
+            response = await super().__call__(method, request_timeout)
+            if isinstance(method, SendPhoto):
+                response.photo = [SimpleNamespace(file_id=f"UPLOAD_{self.id}_{len(self.sent)}")]
+            return response
+
+    async def scenario():
+        i = interaction
+        first = UploadBot(i.db)
+        second = UploadBot(i.db, bot_id=654321)
+        i.bot = first
+        try:
+            await i.send(text="/start")
+            assert isinstance(first.last.photo, BufferedInputFile)
+            assert first.last.photo.filename == "menu.png"
+            await i.send(callback="menu")
+            assert first.last.photo == "UPLOAD_123456_1"
+            await i.send(callback="profile")
+            assert isinstance(first.last.photo, BufferedInputFile)
+            assert first.last.photo.filename == "personal-account.png"
+            await i.send(callback="club:cinema")
+            assert isinstance(first.last.photo, BufferedInputFile)
+            assert first.last.photo.filename == "clubs.png"
+            club_banner_id = f"UPLOAD_123456_{len(first.sent)}"
+            i.db.club["cover"] = "CLUB_COVER_FILE_ID"
+            await i.send(callback="club:cinema")
+            assert first.last.photo == "CLUB_COVER_FILE_ID"
+            i.db.club["cover"] = None
+            await i.send(callback="club:cinema")
+            assert first.last.photo == club_banner_id
+            # The same dispatcher must upload the original for another bot.
+            i.bot = second
+            await i.send(callback="menu")
+            assert isinstance(second.last.photo, BufferedInputFile)
+            assert second.last.photo.filename == "menu.png"
+            await i.send(callback="menu")
+            assert second.last.photo == "UPLOAD_654321_1"
+            # A fresh dispatcher uploads again; cache is not global or persistent.
+            restarted = Interaction(i.db, first)
+            await restarted.send(callback="menu")
+            assert isinstance(first.last.photo, BufferedInputFile)
+        finally:
+            await first.session.close()
+            await second.session.close()
+
+    run(scenario())
+
+
+def test_main_menu_uses_exact_original_labels_and_permission_gates(interaction):
+    async def scenario():
+        i = interaction
+        for user_id, privileged in (
+            (104, {}),
+            (101, {"manage": "Мои клубы"}),
+            (103, {"manage": "Мои клубы", "admin": "Админ-меню"}),
+        ):
+            await i.send(text="/start", user_id=user_id)
+            buttons = {
+                button.callback_data: button.text
+                for row in i.bot.last.reply_markup.inline_keyboard
+                for button in row
+            }
+            assert buttons == {
+                "clubs": "Клубы ЦУ",
+                "future:events": "Мероприятия",
+                "profile": "Личный кабинет",
+                "future:mine": "Мои мероприятия",
+                "faq": "FAQ",
+                **privileged,
+            }
 
     run(scenario())
 
@@ -281,7 +436,7 @@ def test_persistent_draft_preview_save_and_html_escape(interaction):
         restored = Interaction(i.db, i.bot)  # A fresh dispatcher has no FSM state.
         await restored.send(text="<b>Описание</b>")
         assert i.db.club["description"] == ""
-        assert "&lt;b&gt;Описание&lt;/b&gt;" in i.bot.last.text
+        assert "&lt;b&gt;Описание&lt;/b&gt;" in i.bot.last_text
         action = i.bot.action("save:")
         restored_again = Interaction(i.db, i.bot)
         await restored_again.send(callback=action)
@@ -290,7 +445,57 @@ def test_persistent_draft_preview_save_and_html_escape(interaction):
         version = i.db.club["version"]
         await restored_again.send(callback=action)
         assert i.db.club["version"] == version
-        assert "устарело" in i.bot.last.text
+        assert "устарело" in i.bot.last_text
+
+    run(scenario())
+
+
+@pytest.mark.parametrize(
+    "field,update,success",
+    [
+        ("name", {"text": "Новое имя"}, "<b>Название клуба успешно установлено ✅</b>"),
+        ("description", {"text": "Описание"}, "<b>Описание клуба успешно установлено ✅</b>"),
+        (
+            "channel",
+            {"text": "https://t.me/example"},
+            "<b>Ссылка на канал/чат клуба успешно установлено ✅</b>",
+        ),
+        ("cover", {"photo": "ORIGINAL_CLUB_COVER"}, "<b>Аватар клуба успешно установлен ✅</b>"),
+    ],
+)
+def test_profile_save_preserves_exact_original_success(interaction, field, update, success):
+    async def scenario():
+        i = interaction
+        await i.send(callback=f"edit:cinema:{field}")
+        await i.send(**update)
+        await i.send(callback=i.bot.action("save:"))
+        assert i.bot.last_text == success + "\n\n" + telegram.card_text(i.db.club)
+        assert i.db.states[101].state == "idle"
+        if field == "cover":
+            assert isinstance(i.bot.last, SendPhoto)
+            assert i.bot.last.photo == "ORIGINAL_CLUB_COVER"
+
+    run(scenario())
+
+
+def test_owner_card_uses_real_organizers_and_original_cover(interaction):
+    async def scenario():
+        i = interaction
+        i.db.club["cover"] = "ORIGINAL_CLUB_COVER"
+        i.db.club["public_team"] = [{"name": "Public-only actor", "role": "Режиссёр"}]
+        # An organizer may read the owner card without leader-only team access.
+        await i.send(callback="manageclub:cinema", user_id=102)
+        assert isinstance(i.bot.last, SendPhoto)
+        assert i.bot.last.photo == "ORIGINAL_CLUB_COVER"
+        assert "<u>Организаторы:</u>" in i.bot.last.caption
+        assert "- <b>&lt;Actor&gt;</b> (@any_name)" in i.bot.last.caption
+        assert "Public-only actor" not in i.bot.last.caption
+        assert "Режиссёр" not in i.bot.last.caption
+        assert not any(
+            button.callback_data == "organizers:cinema"
+            for row in i.bot.last.reply_markup.inline_keyboard
+            for button in row
+        )
 
     run(scenario())
 
@@ -303,12 +508,12 @@ def test_revoked_permission_cannot_save_or_continue_draft(interaction):
         action = i.bot.action("save:")
         del i.db.flags[102]
         await i.send(callback=action, user_id=102)
-        assert "Нет права" in i.bot.last.text
+        assert "Нет права" in i.bot.last_text
         assert i.db.club["name"] == "Киноклуб"
         await i.send(callback="edit:cinema:name", user_id=102)
-        assert "Нет права" in i.bot.last.text
+        assert "Нет права" in i.bot.last_text
         await i.send(callback="manageclub:cinema", user_id=102)
-        assert "Нет доступа" in i.bot.last.text
+        assert "Нет доступа" in i.bot.last_text
 
     run(scenario())
 
@@ -328,7 +533,7 @@ def test_old_confirmation_and_concurrent_edit_do_not_overwrite(interaction):
         assert i.db.states[101].state == "club_profile_preview"
         i.db.club["version"] += 1
         await i.send(callback=current_save)
-        assert "Карточка изменилась" in i.bot.last.text
+        assert "Карточка изменилась" in i.bot.last_text
         assert i.db.club["description"] == ""
 
     run(scenario())
@@ -345,7 +550,10 @@ def test_public_team_photo_and_cancel(interaction):
         assert i.db.flags == previous_flags
         await i.send(callback="edit:cinema:cover")
         await i.send(photo="OFFLINE_FILE_ID")
-        assert isinstance(i.bot.sent[-2], SendPhoto)
+        assert isinstance(i.bot.last, SendPhoto)
+        assert i.bot.last.photo == "OFFLINE_FILE_ID"
+        assert "Предпросмотр" in i.bot.last.caption
+        assert i.bot.last.reply_markup
         await i.send(callback=i.bot.action("save:"))
         assert i.db.club["cover"] == "OFFLINE_FILE_ID"
         await i.send(callback="edit:cinema:name")
@@ -362,10 +570,10 @@ def test_organizers_require_numeric_id_and_leader_on_every_action(interaction):
         i = interaction
         await i.send(text="/start", user_id=105)
         await i.send(callback="orgadd:cinema", user_id=102)
-        assert "лидер" in i.bot.last.text
+        assert "лидер" in i.bot.last_text
         await i.send(callback="orgadd:cinema")
         await i.send(text="@some_name")
-        assert "числовой" in i.bot.last.text
+        assert "числовой" in i.bot.last_text
         await i.send(text="105")
         await i.send(callback=i.bot.action("orgsave:"))
         assert all(i.db.flags[105].values())
@@ -393,6 +601,9 @@ def test_group_updates_are_ignored_and_long_cards_fit_telegram(interaction):
         assert not i.bot.sent and not i.db.states
         i.db.club["description"] = "😀" * 6000 + "<end>"
         await i.send(callback="club:cinema")
+        assert isinstance(i.bot.sent[0], SendPhoto)
+        assert i.bot.sent[0].caption is None
+        assert i.bot.sent[0].reply_markup is None
         messages = [item for item in i.bot.sent if isinstance(item, SendMessage)]
         assert len(messages) > 1
         assert "😀" * 6000 + "<end>" in "".join(item.text for item in messages)
@@ -460,6 +671,15 @@ def test_real_postgres_dispatcher_restores_draft_and_rechecks_access(telegram_da
                     manage_events=False,
                     record_attendance=False,
                 )
+                await service.get_or_create_person(104, "External")
+                with pytest.raises(PermissionDenied):
+                    await service.organizer_names(104, "cinema")
+                names = await service.organizer_names(102, "cinema")
+                assert len(names) == 2
+                assert {"full_name": "Editor", "username": None} in names
+                # Reading names does not grant organizer-management permissions.
+                with pytest.raises(PermissionDenied):
+                    await service.list_organizers(102, "cinema")
             tracker = MemoryDB()
             tracker.commits = 1
             i = Interaction(tracker)
@@ -485,10 +705,13 @@ def test_real_postgres_dispatcher_restores_draft_and_rechecks_access(telegram_da
             await i.send(text="Must never save", user_id=102)
             revoked_action = i.bot.action("save:")
             async with sessions.begin() as session:
-                await ClubService(session).remove_organizer(101, "cinema", 102)
+                service = ClubService(session)
+                await service.remove_organizer(101, "cinema", 102)
+                with pytest.raises(PermissionDenied):
+                    await service.organizer_names(102, "cinema")
             i.dp = telegram.build_dispatcher(sessions, settings)
             await i.send(callback=revoked_action, user_id=102)
-            assert "Нет права" in i.bot.last.text
+            assert "Нет права" in i.bot.last_text
             async with sessions.begin() as session:
                 assert (await ClubService(session).get_club("cinema"))["name"] == "Киноклуб"
         finally:

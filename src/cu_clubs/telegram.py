@@ -11,15 +11,16 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 
+from cu_clubs import legacy
 from cu_clubs.models import Conversation
 from cu_clubs.services import ClubNotFound, ClubService, PermissionDenied, ValidationError
 
 UNAVAILABLE = "Этот раздел ещё в разработке. Сейчас доступны клубы и управление профилем клуба."
 FIELDS = {
-    "name": "Название",
-    "description": "Описание",
-    "channel": "Канал или сайт",
-    "cover": "Обложка",
+    "name": legacy.text("set_club_name"),
+    "description": legacy.text("set_club_description"),
+    "channel": legacy.text("set_club_link"),
+    "cover": legacy.text("set_club_avatar"),
     "public_team": "Публичная команда",
 }
 
@@ -44,10 +45,8 @@ def card_text(club: dict[str, Any]) -> str:
         or "Команда пока не указана"
     )
     return (
-        f"<b>{escape(club['name'])}</b> · Уровень: {escape(club['level'])}\n\n"
-        f"{escape(club.get('description') or 'Описание клуба заполняет команда.')}\n\n"
-        f"<b>Команда</b>\n{people}"
-        + (f"\n\nКанал или сайт: {escape(club['channel'])}" if club.get("channel") else "")
+        legacy.club_base_text(club)
+        + f"\n\n<b>Уровень:</b> {escape(club['level'])}\n\n<b>Команда</b>\n{people}"
         + "".join(
             f"\n{escape(link['label'])}: {escape(link['url'])}" for link in club.get("links", [])
         )
@@ -92,9 +91,57 @@ async def _send_text(bot: Bot, user_id: int, text: str, markup: Any) -> None:
         )
 
 
+async def _send_screen(
+    bot: Bot,
+    user_id: int,
+    text: str,
+    markup: Any,
+    photo: Any,
+    *,
+    banner_role: str | None = None,
+    file_ids: dict[tuple[int, str], str] | None = None,
+) -> None:
+    if photo is not None:
+        key = (bot.id, banner_role) if banner_role else None
+        if key is not None and file_ids is not None:
+            photo = file_ids.get(key, photo)
+        if len(text.encode("utf-16-le")) // 2 <= 1000:
+            result = await bot.send_photo(
+                user_id, photo, caption=text, parse_mode="HTML", reply_markup=markup
+            )
+            if key is not None and file_ids is not None and getattr(result, "photo", None):
+                file_ids[key] = result.photo[-1].file_id
+            return
+        result = await bot.send_photo(user_id, photo)
+        if key is not None and file_ids is not None and getattr(result, "photo", None):
+            file_ids[key] = result.photo[-1].file_id
+    if text:
+        await _send_text(bot, user_id, text, markup)
+
+
+def _callback_banner(data: str) -> str | None:
+    if data in {"menu", "cancel", "admin", "faq", "faq:levels"}:
+        return "menu"
+    if data == "profile":
+        return "personal-account"
+    if data == "future:events":
+        return "events"
+    if data == "future:mine":
+        return "personal-account"
+    if data == "clubs" or data.startswith(("club:", "subscribe:")):
+        return "clubs"
+    if data == "manage" or data.startswith(
+        ("manageclub:", "editmenu:", "edit:", "save:", "cancel:", "organizers:", "org")
+    ):
+        return "club-owner"
+    return None
+
+
 def _confirmation(action: str, state: Conversation) -> InlineKeyboardMarkup:
     token = state.payload["token"]
-    return keyboard([("Сохранить", f"{action}:{token}"), ("Отмена", f"cancel:{token}")])
+    return keyboard(
+        [(legacy.text("confirm"), f"{action}:{token}"), (legacy.text("cancel"), f"cancel:{token}")]
+    )
 
 
 def parse_value(field: str, message: Message) -> Any:
@@ -184,15 +231,16 @@ async def _leader_access(service: ClubService, user_id: int, public_id: str) -> 
 
 async def _menu(service: ClubService, user_id: int) -> tuple[str, InlineKeyboardMarkup]:
     rows = [
-        [("Мероприятия", "future:events"), ("Клубы", "clubs")],
-        [("Мои встречи", "future:mine"), ("Мой профиль", "profile")],
+        [(legacy.text("cu_clubs"), "clubs"), (legacy.text("events"), "future:events")],
+        [(legacy.text("personal_account"), "profile")],
+        [(legacy.text("my_events"), "future:mine")],
         [("FAQ", "faq")],
     ]
     if await service.managed_clubs(user_id):
-        rows.append([("Управление клубом", "manage")])
+        rows.append([(legacy.text("my_clubs"), "manage")])
     if await service.is_admin(user_id):
-        rows.append([("Администрирование", "admin")])
-    return "Здесь можно найти клуб и узнать о его команде. Выбери раздел:", keyboard(*rows)
+        rows.append([(legacy.text("admin_menu"), "admin")])
+    return legacy.text("main_menu_text"), keyboard(*rows)
 
 
 async def _clubs(service: ClubService, *, manage: bool, user_id: int) -> tuple[str, Any]:
@@ -200,7 +248,10 @@ async def _clubs(service: ClubService, *, manage: bool, user_id: int) -> tuple[s
     prefix = "manageclub" if manage else "club"
     rows = [[(club["name"], f"{prefix}:{club['public_id']}")] for club in clubs]
     rows.append([("В меню", "menu")])
-    return ("Выбери клуб:" if clubs else "Клубы пока не добавлены."), keyboard(*rows)
+    title = legacy.owned_clubs_text(len(clubs)) if manage else legacy.text("cu_clubs_list")
+    if not clubs and not manage:
+        title += "\n\nКлубы пока не добавлены."
+    return title, keyboard(*rows)
 
 
 async def _club_card(service: ClubService, user_id: int, public_id: str) -> tuple[str, Any, Any]:
@@ -213,12 +264,14 @@ async def _club_card(service: ClubService, user_id: int, public_id: str) -> tupl
         keyboard(
             [
                 (
-                    "Отписаться" if subscribed else "Подписаться",
+                    legacy.text("disable_mailing_from_this_club")
+                    if subscribed
+                    else legacy.text("enable_mailing_from_this_club"),
                     f"subscribe:{public_id}:{0 if subscribed else 1}",
                 )
             ],
             [("Поделиться", f"share:{public_id}"), ("Что даёт уровень?", "faq:levels")],
-            [("Клубы", "clubs"), ("В меню", "menu")],
+            [(legacy.text("cu_clubs"), "clubs"), ("В меню", "menu")],
         ),
         club.get("cover"),
     )
@@ -226,10 +279,10 @@ async def _club_card(service: ClubService, user_id: int, public_id: str) -> tupl
 
 async def _edit_menu(service: ClubService, user_id: int, public_id: str) -> tuple[str, Any]:
     club = await _profile_access(service, user_id, public_id)
-    return f"Профиль клуба «{escape(club['name'])}». Что изменить?", keyboard(
+    return legacy.text("profile_text") + f"\n\n{escape(club['name'])}", keyboard(
         *[[(name, f"edit:{public_id}:{field}")] for field, name in FIELDS.items()],
         [("Посмотреть карточку", f"club:{public_id}")],
-        [("Назад", f"manageclub:{public_id}"), ("В меню", "menu")],
+        [(legacy.text("back"), f"manageclub:{public_id}"), ("В меню", "menu")],
     )
 
 
@@ -296,6 +349,7 @@ def build_dispatcher(sessionmaker: Any, settings: Any) -> Dispatcher:
     """
     del settings  # Configuration and credentials belong to the application lifespan.
     dispatcher = Dispatcher(disable_fsm=True)
+    banner_file_ids: dict[tuple[int, str], str] = {}
     router = Router(name="private_clubs")
     router.message.filter(F.chat.type == "private")
     router.callback_query.filter(F.message.chat.type == "private")
@@ -309,6 +363,7 @@ def build_dispatcher(sessionmaker: Any, settings: Any) -> Dispatcher:
         command = (message.text or "").split(maxsplit=1) if message else []
         data = callback.data or "" if callback else ""
         photo = None
+        banner_role = _callback_banner(data) if callback else None
         share_id = None
         text = ""
         markup = None
@@ -322,12 +377,16 @@ def build_dispatcher(sessionmaker: Any, settings: Any) -> Dispatcher:
                     parts = message.text.split(maxsplit=1)
                     if len(parts) == 2 and parts[1].startswith("c_"):
                         text, markup, photo = await _club_card(service, user.id, parts[1][2:])
+                        banner_role = "clubs"
                     else:
                         text, markup = await _menu(service, user.id)
+                        banner_role = "menu"
                 elif message and message.text in {"/cancel", "/menu"}:
                     _reset(state)
                     text, markup = await _menu(service, user.id)
+                    banner_role = "menu"
                 elif message and state.state == "club_profile_edit":
+                    banner_role = "club-owner"
                     payload = state.payload
                     club = await _profile_access(service, user.id, payload["club"])
                     value = parse_value(payload["field"], message)
@@ -341,6 +400,7 @@ def build_dispatcher(sessionmaker: Any, settings: Any) -> Dispatcher:
                     )
                     markup = _confirmation("save", state)
                 elif message and state.state == "organizer_add":
+                    banner_role = "club-owner"
                     public_id = state.payload["club"]
                     await _leader_access(service, user.id, public_id)
                     raw = (message.text or "").strip()
@@ -355,8 +415,10 @@ def build_dispatcher(sessionmaker: Any, settings: Any) -> Dispatcher:
                         text = "Сначала сохрани или отмени подготовленное изменение."
                         save_action = "save" if state.state == "club_profile_preview" else "orgsave"
                         markup = _confirmation(save_action, state)
+                        banner_role = "club-owner"
                     else:
                         text, markup = await _menu(service, user.id)
+                        banner_role = "menu"
                 elif data.startswith("cancel:") and data != f"cancel:{state.payload.get('token')}":
                     text = "Эта кнопка относится к другому изменению. Продолжи текущий диалог."
                 elif data in {"menu", "cancel"} or data.startswith("cancel:"):
@@ -374,24 +436,26 @@ def build_dispatcher(sessionmaker: Any, settings: Any) -> Dispatcher:
                 elif data == "admin":
                     if not await service.is_admin(user.id):
                         raise PermissionDenied("Администрирование доступно только администраторам.")
-                    text = "Администрирование: выбери клуб для изменения профиля и организаторов."
+                    text = legacy.text("admin_menu_text") + (
+                        "\n\nВыбери клуб для изменения профиля и организаторов."
+                    )
                     _, markup = await _clubs(service, manage=True, user_id=user.id)
                 elif data == "profile":
-                    text = (
-                        f"<b>Мой профиль</b>\n{escape(person['full_name'])}\nПочта не подтверждена."
+                    text = legacy.personal_account_text(person["full_name"]) + (
+                        "\n\nПочта не подтверждена."
                     )
                     markup = keyboard([("В меню", "menu")])
                 elif data.startswith("future:"):
                     text, markup = UNAVAILABLE, keyboard([("В меню", "menu")])
                 elif data in {"faq", "faq:levels"}:
                     text = (
-                        "<b>Как пользоваться ботом</b>\nОткрой «Клубы», чтобы найти карточку "
+                        "<b>Как пользоваться ботом</b>\nОткрой «Клубы ЦУ», чтобы найти карточку "
                         "и подписаться на анонсы. События и запись пока в разработке.\n\n"
                         "<b>Уровни клубов</b>\nConcept → Pre-Seed → Seed → Pre-IPO → IPO. "
                         "Уровень назначает администрация. Гостевой вход планируется от Seed; "
                         "он пока не подключён."
                     )
-                    markup = keyboard([("Клубы", "clubs"), ("В меню", "menu")])
+                    markup = keyboard([(legacy.text("cu_clubs"), "clubs"), ("В меню", "menu")])
                 elif data.startswith("club:"):
                     text, markup, photo = await _club_card(service, user.id, data.split(":", 1)[1])
                 elif data.startswith("subscribe:"):
@@ -415,13 +479,16 @@ def build_dispatcher(sessionmaker: Any, settings: Any) -> Dispatcher:
                     club = await service.get_club(public_id)
                     if club is None:
                         raise ClubNotFound("Клуб не найден.")
-                    text, rows = f"Управление: {escape(club['name'])}", []
+                    owners = await service.organizer_names(user.id, public_id)
+                    text, rows = legacy.owner_club_text(club, owners), []
+                    text += f"\n\n<b>Уровень:</b> {escape(club['level'])}"
+                    photo = club.get("cover")
                     if (
                         permissions["is_admin"]
                         or permissions["is_leader"]
                         or permissions["edit_profile"]
                     ):
-                        rows.append([("Профиль клуба", f"editmenu:{public_id}")])
+                        rows.append([(legacy.text("profile"), f"editmenu:{public_id}")])
                     if permissions["is_admin"] or permissions["is_leader"]:
                         rows.append([("Организаторы", f"organizers:{public_id}")])
                     rows.append([("В меню", "menu")])
@@ -443,12 +510,14 @@ def build_dispatcher(sessionmaker: Any, settings: Any) -> Dispatcher:
                     hints = {
                         "public_team": "Пришли список: один человек на строку, «Имя — роль». "
                         "Это публичное описание, оно не выдаёт права. Для очистки — «Удалить».",
-                        "cover": "Пришли фотографию для обложки или «Удалить».",
-                        "channel": "Пришли ссылку https://… или @username; "
-                        "для очистки — «Удалить».",
+                        "name": legacy.text("input_club_name"),
+                        "description": legacy.text("input_club_description"),
+                        "cover": legacy.text("input_club_avatar") + "\n\nДля очистки — «Удалить».",
+                        "channel": legacy.text("input_club_link")
+                        + ("\n\nМожно указать @username; для очистки — «Удалить»."),
                     }
                     text = hints.get(field, f"Пришли новое значение: {FIELDS[field].lower()}.")
-                    markup = keyboard([("Отмена", f"cancel:{state.payload['token']}")])
+                    markup = keyboard([(legacy.text("cancel"), f"cancel:{state.payload['token']}")])
                 elif (
                     data == f"save:{state.payload.get('token')}"
                     and state.state == "club_profile_preview"
@@ -461,9 +530,18 @@ def build_dispatcher(sessionmaker: Any, settings: Any) -> Dispatcher:
                         payload["value"],
                         expected_version=payload["version"],
                     )
+                    success_key = {
+                        "name": "club_name_set",
+                        "description": "club_description_set",
+                        "channel": "club_link_set",
+                        "cover": "club_avatar_set",
+                    }.get(payload["field"])
+                    success = (
+                        legacy.text(success_key) if success_key else "Публичная команда сохранена."
+                    )
                     _reset(state)
-                    text, photo = "Профиль сохранён.\n\n" + card_text(club), club.get("cover")
-                    markup = keyboard([("Профиль клуба", f"editmenu:{club['public_id']}")])
+                    text, photo = success + "\n\n" + card_text(club), club.get("cover")
+                    markup = keyboard([(legacy.text("profile"), f"editmenu:{club['public_id']}")])
                 elif data.startswith("organizers:"):
                     text, markup = await _organizers(service, user.id, data.split(":", 1)[1])
                 elif data.startswith("orgadd:"):
@@ -541,10 +619,18 @@ def build_dispatcher(sessionmaker: Any, settings: Any) -> Dispatcher:
                     [InlineKeyboardButton(text="Карточка клуба", callback_data=f"club:{share_id}")],
                 ]
             )
-        if photo:
-            await bot.send_photo(user.id, photo)
-        if text:
-            await _send_text(bot, user.id, text, markup)
+        original_banner = photo is None and banner_role is not None
+        if original_banner:
+            photo = legacy.banner(banner_role)
+        await _send_screen(
+            bot,
+            user.id,
+            text,
+            markup,
+            photo,
+            banner_role=banner_role if original_banner else None,
+            file_ids=banner_file_ids,
+        )
         if callback:
             await callback.answer()
 

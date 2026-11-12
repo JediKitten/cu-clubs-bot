@@ -329,6 +329,19 @@ class ClubService:
             for member, account, person in rows
         ]
 
+    async def organizer_names(self, telegram_id: int, public_id: str) -> list[dict]:
+        if not any((await self.permissions(telegram_id, public_id)).values()):
+            raise PermissionDenied("Нет доступа к управлению этим клубом")
+        club = await self._club(public_id)
+        rows = await self.session.execute(
+            select(Person.full_name, TelegramAccount.username)
+            .join(TelegramAccount, TelegramAccount.person_id == Person.id)
+            .join(Membership, Membership.person_id == Person.id)
+            .where(Membership.club_id == club.id)
+            .order_by(Membership.role, Person.full_name)
+        )
+        return [{"full_name": name, "username": username} for name, username in rows]
+
     async def set_organizer(
         self,
         telegram_id: int,

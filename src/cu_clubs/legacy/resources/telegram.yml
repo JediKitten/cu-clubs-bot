@@ -1,0 +1,754 @@
+settings:
+  parse_mode: html
+  token_env: BOT_TOKEN
+  long_poller:
+    Timeout: 10
+
+commands:
+  /start: Перезапустить бота
+
+buttons:
+  core:hide:
+    unique: core_hide
+    text: '{{ text `hide` }}'
+
+  core:cancel:
+    unique: core_cancel
+    text: '{{ text `cancel` }}'
+
+  core:back:
+    unique: core_back
+    text: '{{ text `back` }}'
+
+  core:page_counter:
+    unique: core_pageCounter
+    text: '📃 {{.Page}}/{{.PagesCount}}'
+
+  auth:personalData:accept:
+    unique: personalData_accept
+    text: '{{ text `accept` }}'
+
+  auth:personalData:decline:
+    unique: personalData_decline
+    text: '{{ text `decline` }}'
+
+  auth:external_user:
+    unique: auth_externalUser
+    text: '{{ text `external_user` }}'
+
+  auth:grant_user:
+    unique: auth_grantUser
+    text: '{{ text `grant_user` }}'
+
+  auth:student:
+    unique: auth_student
+    text: '{{ text `student` }}'
+
+  auth:back_to_menu:
+    unique: auth_backToMenu
+    text: '{{ text `back` }}'
+
+  auth:resend_email:
+    unique: auth_resendEmail
+    text: '{{ text `resend` }}'
+
+  mainMenu:events:
+    unique: mainMenu_events
+    text: '{{ text `events` }}'
+
+#  mainMenu:my_events:
+#    unique: mainMenu_myEvents
+#    text: '{{ text `my_events` }}'
+
+#  mainMenu:qr:
+#    unique: mainMenu_qr
+#    text: '{{ text `qr` }}'
+
+  mainMenu:my_clubs:
+    unique: mainMenu_myClubs
+    text: '{{ text `my_clubs` }}'
+
+  mainMenu:admin_menu:
+    unique: mainMenu_adminMenu
+    text: '{{ text `admin_menu` }}'
+
+  mainMenu:back:
+    unique: mainMenu_back
+    text: '{{ text `back` }}'
+
+  digest:events:
+    unique: digest_events
+    text: '{{ text `events_list_btn` }}'
+
+  digest:back:
+    unique: digest_back
+    text: '{{ text `back` }}'
+
+  personalAccount:my_events:
+    unique: personalAccount_myEvents
+    text: '{{ text `my_events` }}'
+
+  mainMenu:qr:
+    unique: mainMenu_qr
+    text: '{{ text `qr` }}'
+
+  personalAccount:change_role:
+    unique: personalAccount_changeRole
+    text: '{{ text `change_role` }}'
+
+  changeRole:confirm:
+    unique: changeRole_confirm
+    text: '{{ text `confirm` }}'
+
+  changeRole:cancel:
+    unique: changeRole_cancel
+    text: '{{ text `cancel` }}'
+
+  changeRole:grant_user:
+    unique: changeRole_grantUser
+    callback_data: grant_user
+    text: '{{ text `grant_user` }}'
+
+  changeRole:student:
+    unique: changeRole_student
+    callback_data: student
+    text: '{{ text `student` }}'
+
+  changeRole:student:resend_email:
+    unique: changeRole_student_resendEmail
+    text: '{{ text `resend` }}'
+
+  personalAccount:back:
+    unique: personalAccount_back
+    text: '{{ text `back` }}'
+
+  user:events:event:
+    unique: user_event
+    callback_data: '{{.ID}} {{.Page}}'
+    text: '{{if .IsRegistered}}{{text `tick`}} {{end}}{{html .Name}}'
+
+  user:events:next_page:
+    unique: user_events_nextPage
+    callback_data: '{{.Page}}'
+    text: '{{ text `next` }}'
+
+  user:events:prev_page:
+    unique: user_events_prevPage
+    callback_data: '{{.Page}}'
+    text: '{{ text `prev` }}'
+
+  user:events:back:
+    unique: user_events_back
+    callback_data: '{{.Page}}'
+    text: '{{ text `back` }}'
+
+  user:events:event:register:
+    unique: event_register
+    callback_data: '{{.ID}} {{.Page}}'
+    text: '{{ text `register` }}'
+
+  user:events:event:cancel_registration:
+    unique: cancel_registration
+    callback_data: '{{.ID}} {{.Page}}'
+    text: '{{ text `cancel_registration` }}'
+
+  user:myEvents:event:
+    unique: user_myEvent
+    callback_data: '{{.ID}} {{.Page}}'
+    text: '{{if .IsOver}}{{text `over` }} {{end}}{{html .Name}}{{if .IsVisited}} {{text `tick`}}{{end}}'
+
+  user:myEvents:event:cancel_registration:
+    unique: myE_cancel_registration
+    callback_data: '{{.ID}} {{.Page}}'
+    text: '{{ text `cancel_registration` }}'
+
+  user:myEvents:event:export:
+    unique: myEvent_export
+    callback_data: '{{.ID}}'
+    text: '{{ text `event_export` }}'
+
+  user:myEvents:next_page:
+    unique: user_myEvents_nextPage
+    callback_data: '{{.Page}}'
+    text: '{{ text `next` }}'
+
+  user:myEvents:prev_page:
+    unique: user_myEvents_prevPage
+    callback_data: '{{.Page}}'
+    text: '{{ text `prev` }}'
+
+  user:myEvents:back:
+    unique: user_myEvents_back
+    callback_data: '{{.Page}}'
+    text: '{{ text `back` }}'
+
+  user:url:event:register:
+    unique: user_url_event_reg
+    callback_data: '{{.ID}}'
+    text: '{{if .IsOver}}{{text `event_over` }}{{else if .IsRegistered}}{{ text `registered` }}{{else}}{{ text `register` }}{{end}}'
+
+  mailing:switch:
+    unique: mailing_switch
+    callback_data: '{{.ClubID}}'
+    text: '{{if .Allowed}}{{ text `disable_mailing_from_this_club` }}{{else}}{{ text `enable_mailing_from_this_club` }}{{end}}'
+
+  clubOwner:my_clubs:
+    unique: clubOwner_myClubs
+    text: '{{ text `my_clubs` }}'
+
+  clubOwner:back_to_menu:
+    unique: clubOwner_backToMenu
+    text: '{{ text `back` }}'
+
+  clubOwner:myClubs:club:
+    unique: clubOwner_myClubs_club
+    callback_data: '{{.ID}}'
+    text: '{{html .Name}}'
+
+  clubOwner:myClubs:back:
+    unique: clubOwner_myClubs_back
+    text: '{{ text `back` }}'
+
+  clubOwner:club:back:
+    unique: clubOwner_club_back
+    callback_data: '{{.ID}}'
+    text: '{{ text `back` }}'
+
+  clubOwner:club:settings:
+    unique: clubOwner_club_settings
+    callback_data: '{{.ID}}'
+    text: '{{ text `club_settings` }}'
+
+  clubOwner:club:settings:back:
+    unique: cOwner_club_settings_back
+    callback_data: '{{.ID}}'
+    text: '{{ text `back` }}'
+
+  clubOwner:club:settings:add_owner:
+    unique: clubOwner_club_addOwner
+    callback_data: '{{.ID}}'
+    text: '{{ text `add_club_owner` }}'
+
+  clubOwner:club:settings:subscription_access:
+    unique: clOwner_cl_sub_access
+    callback_data: '{{.ID}}'
+    text: '{{ text `subscription_access` }}'
+
+  clubOwner:club:settings:subscription_access:required:
+    unique: clOwner_cl_sub_acs_reqr
+    callback_data: '{{.ID}}'
+    text: '{{if .SubscriptionRequired }}{{ text `tick` }}{{else}}{{text `cross` }}{{end}} {{ text `subscription_require_allowed` }}'
+
+  clubOwner:club:settings:subscription_access:set_channel_id:
+    unique: clOwner_club_set_chan_id
+    callback_data: '{{.ID}}'
+    text: '{{ text `set_channel_id` }}'
+
+  clubOwner:club:settings:subscription_access:back:
+    unique: clOwner_cl_sub_acs_back
+    callback_data: '{{.ID}}'
+    text: '{{ text `back` }}'
+
+  clubOwner:club:settings:profile:
+    unique: clubOwner_club
+    callback_data: '{{.ID}}'
+    text: '{{ text `profile` }}'
+
+  clubOwner:club:settings:profile:back:
+    unique: clubOwner_cl_prof_back
+    callback_data: '{{.ID}}'
+    text: '{{ text `back` }}'
+
+  clubOwner:club:settings:profile:set_name:
+    unique: clubOwner_club_setName
+    callback_data: '{{.ID}}'
+    text: '{{ text `set_club_name` }}'
+
+  clubOwner:club:settings:profile:set_description:
+    unique: clubOwner_club_setDesc
+    callback_data: '{{.ID}}'
+    text: '{{ text `set_club_description` }}'
+
+  clubOwner:club:settings:profile:set_link:
+    unique: clubOwner_club_setLink
+    callback_data: '{{.ID}}'
+    text: '{{ text `set_club_link` }}'
+
+  clubOwner:club:settings:profile:set_avatar:
+    unique: clubOwner_club_setAvatar
+    callback_data: '{{.ID}}'
+    text: '{{ text `set_club_avatar` }}'
+
+  clubOwner:club:settings:profile:set_intro:
+    unique: clubOwner_club_setIntro
+    callback_data: '{{.ID}}'
+    text: '{{ text `set_club_intro` }}'
+
+  clubOwner:club:settings:profile:should_show:
+    unique: clubOwner_club_shouldShow
+    callback_data: '{{.ID}}'
+    text: '{{ if .ShouldShow }}{{ text `show_in_menu` }}{{ else }}{{ text `not_show_in_menu` }}{{ end }}'
+
+  clubOwner:club:settings:warnings:
+    unique: clubOwner_club_warnings
+    callback_data: '{{.ID}}'
+    text: '{{ text `warnings` }}'
+
+  clubOwner:club:settings:warnings:user:
+    unique: cOwner_warnings
+    callback_data: '{{.ClubID}} {{.UserID}}'
+    text: '{{if .Warnings}}{{text `tick`}} {{html .FIO}}{{else}}{{text `cross`}} {{html .FIO}}{{end}}'
+
+  clubOwner:club:create_event:
+    unique: clubOwner_club_createEvent
+    callback_data: '{{.ID}}'
+    text: '{{ text `create_event` }}'
+
+  clubOwner:create_event:description_skip:
+    unique: cOwner_createEvent_descSkip
+    text: '{{ text `skip` }}'
+
+  clubOwner:create_event:end_time_skip:
+    unique: cOwner_createEvent_eTimeSkip
+    text: '{{ text `skip` }}'
+
+  clubOwner:create_event:after_registration_text_skip:
+    unique: cOwner_createEvent_AfterRegTextSkip
+    text: '{{ text `skip` }}'
+
+  clubOwner:create_event:confirm:
+    unique: clubOwner_event_confirm
+    callback_data: '{{.ID}}'
+    text: '{{ text `create` }}'
+
+  clubOwner:create_event:refill:
+    unique: clubOwner_event_refill
+    callback_data: '{{.ID}}'
+    text: '{{ text `refill` }}'
+
+  clubOwner:create_event:role:
+    unique: event_role
+    callback_data: '{{.ID}} {{.Role}}'
+    text: '{{if .Allowed}}{{text `tick`}}{{else}}{{text `cross`}}{{end}} {{html .RoleName}}'
+
+  clubOwner:confirmMailing:
+    unique: clubOwner_confirmMailing
+    text: '{{ text `confirm` }}'
+
+  clubOwner:cancelMailing:
+    unique: clubOwner_cancelMailing
+    text: '{{ text `cancel` }}'
+
+  clubOwner:club:mailing:
+    unique: clubOwner_club_mailing
+    callback_data: '{{.ID}}'
+    text: '{{ text `mailing` }}'
+
+  clubOwner:club:events:
+    unique: clubOwner_club_events
+    callback_data: '{{.ID}}'
+    text: '{{ text `club_events` }}'
+
+  clubOwner:events:back:
+    unique: clubOwner_events_back
+    callback_data: '{{.ClubID}} {{.Page}}'
+    text: '{{ text `back` }}'
+
+  clubOwner:events:next_page:
+    unique: cOwner_events_nextPage
+    callback_data: '{{.ID}} {{.Page}}'
+    text: '{{ text `next` }}'
+
+  clubOwner:events:prev_page:
+    unique: cOwner_events_prevPage
+    callback_data: '{{.ID}} {{.Page}}'
+    text: '{{ text `prev` }}'
+
+  clubOwner:events:event:
+    unique: cOwner_events_event
+    callback_data: '{{.ID}} {{.Page}}'
+    text: '{{if .IsOver}}{{text `over` }} {{end}}{{html .Name}}'
+
+  clubOwner:event:back:
+    unique: clubOwner_event_back
+    callback_data: '{{.ID}} {{.Page}}'
+    text: '{{ text `back` }}'
+
+  clubOwner:event:qr:
+    unique: cOwner_event_qr
+    callback_data: '{{.ID}} {{.Page}}'
+    text: '{{ text `qr` }}'
+
+  clubOwner:event:mailing:
+    unique: cOwner_event_mailing
+    callback_data: '{{.ID}} {{.Page}}'
+    text: '{{ text `mailing` }}'
+
+  clubOwner:event:mailing:back:
+    unique: cOwner_event_mail_back
+    callback_data: '{{.ID}} {{.Page}}'
+    text: '{{ text `back` }}'
+
+  clubOwner:event:mailing:registered:
+    unique: cOwner_mailing_reg
+    callback_data: '{{.ID}} {{.Page}}'
+    text: '{{ text `mailing_registered_users` }}'
+
+  clubOwner:event:mailing:visited:
+    unique: cOwner_mailing_vis
+    callback_data: '{{.ID}} {{.Page}}'
+    text: '{{ text `mailing_visited_users` }}'
+
+  clubOwner:event:settings:
+    unique: clubOwner_event_settings
+    callback_data: '{{.ID}} {{.Page}}'
+    text: '{{ text `event_settings` }}'
+
+  clubOwner:event:settings:back:
+    unique: cOwner_event_set_back
+    callback_data: '{{.ID}} {{.Page}}'
+    text: '{{ text `back` }}'
+
+  clubOwner:event:settings:edit_name:
+    unique: clubOwner_event_editName
+    callback_data: '{{.ID}} {{.Page}}'
+    text: '{{ text `edit_name` }}'
+
+  clubOwner:event:settings:edit_description:
+    unique: clubOwner_event_editDesk
+    callback_data: '{{.ID}} {{.Page}}'
+    text: '{{ text `edit_description` }}'
+
+  clubOwner:event:settings:edit_after_reg_text:
+    unique: cOwner_event_editARText
+    callback_data: '{{.ID}} {{.Page}}'
+    text: '{{ text `edit_after_reg_text` }}'
+
+  clubOwner:event:settings:edit:max_participants:
+    unique: cOwner_event_editMaxPart
+    callback_data: '{{.ID}} {{.Page}}'
+    text: '{{ text `edit_max_participants` }}'
+
+  clubOwner:event:users:
+    unique: clubOwner_event_users
+    callback_data: '{{.ID}} {{.Page}}'
+    text: '{{ text `event_users` }}'
+
+  clubOwner:event:delete:
+    unique: clubOwner_event_delete
+    callback_data: '{{.ID}} {{.Page}}'
+    text: '{{ text `delete` }}'
+
+  clubOwner:event:delete:back:
+    unique: cOwner_event_delete_back
+    callback_data: '{{.ID}} {{.Page}}'
+    text: '{{ text `back` }}'
+
+  clubOwner:event:delete:accept:
+    unique: cOwner_event_delete_ac
+    callback_data: '{{.ID}} {{.Page}}'
+    text: '{{ text `accept` }}'
+
+  clubOwner:event:delete:decline:
+    unique: cOwner_event_delete_de
+    callback_data: '{{.ID}} {{.Page}}'
+    text: '{{ text `decline` }}'
+
+  clubOwner:activateQR:club:
+    unique: activateQR_club
+    callback_data: '{{.CallbackID}}'
+    text: '{{html .Name}}'
+
+  clubOwner:activateQR:clubs:back:
+    unique: activateQR_clubs_back
+    callback_data: '{{.QrID}}'
+    text: '{{ text `back` }}'
+
+  clubOwner:activateQR:event:
+    unique: activateQR_event
+    callback_data: '{{.CallbackID}}'
+    text: '{{html .Name}}'
+
+  admin:create_club:
+    unique: admin_createClub
+    text: '{{ text `create_club` }}'
+
+  admin:clubs:
+    unique: admin_clubs
+    text: '{{ text `clubs` }}'
+
+  admin:back_to_menu:
+    unique: admin_backToMenu
+    text: '{{ text `back` }}'
+
+  admin:clubs:club:
+    unique: admin_club
+    callback_data: '{{.ID}} {{.Page}}'
+    text: '{{html .Name}}'
+
+  admin:clubs:next_page:
+    unique: admin_clubs_nextPage
+    callback_data: '{{.Page}}'
+    text: '{{ text `next` }}'
+
+  admin:clubs:prev_page:
+    unique: admin_clubs_prevPage
+    callback_data: '{{.Page}}'
+    text: '{{ text `prev` }}'
+
+  admin:club:qr_allowed:
+    unique: admin_club_qr
+    callback_data: '{{.ID}} {{.Page}}'
+    text: '{{if .QrAllowed}}{{text `tick`}}{{else}}{{text `cross`}}{{end}} {{ text `qr_allowed` }}'
+
+  admin:club:subscription_require_allowed:
+    unique: admin_club_sub_req_allow
+    callback_data: '{{.ID}} {{.Page}}'
+    text: '{{if .SubscriptionRequireAllowed }}{{ text `tick` }}{{else}}{{text `cross` }}{{end}} {{ text `subscription_require_allowed` }}'
+
+  admin:club:roles:
+    unique: admin_club_roles
+    callback_data: '{{.ID}} {{.Page}}'
+    text: '{{ text `roles` }}'
+
+  admin:club:roles:role:
+    unique: admin_role
+    callback_data: '{{.ID}} {{.Page}} {{.Role}}'
+    text: '{{if .On}}{{text `tick`}} {{html .RoleText}}{{else}}{{text `cross`}} {{html .RoleText}}{{end}}'
+
+  admin:clubs:back:
+    unique: admin_clubs_back
+    callback_data: '{{.Page}}'
+    text: '{{ text `back` }}'
+
+  admin:club:delete:
+    unique: admin_club_delete
+    callback_data: '{{.ID}} {{.Page}}'
+    text: '{{ text `delete` }}'
+
+  admin:club:add_owner:
+    unique: admin_club_addOwner
+    callback_data: '{{.ID}} {{.Page}}'
+    text: '{{ text `add_club_owner` }}'
+
+  admin:club:del_owner:
+    unique: admin_club_delOwner
+    callback_data: '{{.ID}} {{.Page}}'
+    text: '{{ text `remove_club_owner` }}'
+
+  admin:club:back:
+    unique: admin_club_back
+    callback_data: '{{.ID}} {{.Page}}'
+    text: '{{ text `back` }}'
+
+  admin:attendance_report:
+    unique: admin_attendance_report
+    text: '{{ text `attendance_report` }}'
+
+  # cu clubs tour functionality
+  mainMenu:cuClubs:
+    unique: mainMenu_cuClubs
+    text: '{{ text `cu_clubs` }}'
+
+  cuClubs:club:intro:
+    unique: cuClubs_club_intro
+    callback_data: '{{.ID}} {{.Page}}'
+    text: '{{ .Name }}'
+
+  cuClubs:club:intro:back:
+    unique: club_intro_back
+    callback_data: '{{.ID}} {{.Page}}'
+    text: '{{ text `back` }}'
+
+  cuClubs:club:about:
+    unique: cuClubs_club_about
+    callback_data: '{{.ID}} {{.Page}}'
+    text: '{{ text `club_about` }}'
+
+  cuClubs:club:about:back:
+    unique: cuClubs_club_about_back
+    callback_data: '{{.ID}} {{.Page}}'
+    text: '{{ text `back` }}'
+
+  cuClubs:prev_page:
+    unique: cuClubs_prevPage
+    callback_data: '{{.Page}}'
+    text: '{{ text `prev` }}'
+
+  cuClubs:next_page:
+    unique: cuClubs_nextPage
+    callback_data: '{{.Page}}'
+    text: '{{ text `next` }}'
+
+  cuClubs:back:
+    unique: cuClubs_back
+    callback_data: '{{.Page}}'
+    text: '{{ text `back` }}'
+
+  mainMenu:personalAccount:
+    unique: mainMenu_personalAccount
+    text: '{{ text `personal_account` }}'
+
+
+markups:
+  core:hide:
+    - [ core:hide ]
+  core:back:
+    - [ core:back ]
+
+  auth:personalData:agreementMenu:
+    - [ auth:personalData:accept, auth:personalData:decline ]
+  auth:menu:
+    - [ auth:external_user ]
+    - [ auth:grant_user ]
+    - [ auth:student ]
+  auth:backToMenu:
+    - [ auth:back_to_menu ]
+  auth:resendMenu:
+    - [ auth:resend_email ]
+    - [ auth:back_to_menu ]
+
+  mainMenu:menu:
+    - [ mainMenu:cuClubs, mainMenu:events ]
+    - [ mainMenu:personalAccount ]
+    - [ mainMenu:qr ]
+
+  mainMenu:back:
+    - [ mainMenu:back ]
+
+  digest:menu:
+    - [ digest:events ]
+    - [ mainMenu:back ]
+
+  digest:back:
+    - [ digest:back ]
+
+  mailing:
+    - [ mailing:switch ]
+    - [ core:hide ]
+
+  cuClubs:club:intro:menu:
+    - [ cuClubs:club:about ]
+
+  cuClubs:club:menu:
+    - [ cuClubs:back ]
+
+  cuClubs:back:
+    - [ cuClubs:back ]
+
+  personalAccount:menu:
+    - [ personalAccount:my_events ]
+    - [ mainMenu:back ]
+  personalAccount:change_role:confirmation:
+    - [changeRole:confirm]
+    - [changeRole:cancel]
+  changeRole:choose_new_role:
+    - [ changeRole:grant_user ]
+    - [ changeRole:student ]
+  changeRole:student:resendMenu:
+    - [ changeRole:student:resend_email ]
+    - [ core:hide ]
+
+  personalAccount:back:
+    - [ personalAccount:back ]
+
+
+  user:events:back:
+    - [ user:events:back ]
+  user:events:event:
+    - [ user:myEvents:event:export ]
+    - [ user:events:back ]
+  user:myEvents:back:
+    - [ user:myEvents:back ]
+  user:url:event:
+    - [ user:url:event:register ]
+    - [ mainMenu:back ]
+
+  clubOwner:club:menu:
+    - [ clubOwner:club:events ]
+    - [ clubOwner:club:create_event ]
+    - [ clubOwner:club:mailing ]
+    - [ clubOwner:club:settings ]
+  clubOwner:club:settings:
+    - [ clubOwner:club:settings:add_owner ]
+    - [ clubOwner:club:settings:warnings ]
+    - [ clubOwner:club:settings:profile ]
+    - [ clubOwner:club:settings:subscription_access ]
+    - [ clubOwner:club:back ]
+  clubOwner:club:settings:back:
+    - [ clubOwner:club:settings:back ]
+  clubOwner:club:settings:warnings:
+    - [ clubOwner:club:settings:back ]
+  clubOwner:club:settings:profile:
+    - [ clubOwner:club:settings:profile:set_name, clubOwner:club:settings:profile:set_description ]
+    - [ clubOwner:club:settings:profile:set_link ]
+    - [ clubOwner:club:settings:profile:set_avatar, clubOwner:club:settings:profile:set_intro ]
+    - [ clubOwner:club:settings:profile:should_show ]
+    - [ clubOwner:club:settings:back ]
+  clubOwner:club:settings:profile:back:
+    - [ clubOwner:club:settings:profile:back ]
+  clubOwner:club:settings:subscription_access:
+    - [ clubOwner:club:settings:subscription_access:required ]
+    - [ clubOwner:club:settings:subscription_access:set_channel_id ]
+    - [ clubOwner:club:settings:back ]
+  clubOwner:club:settings:subscription_access:back:
+    - [ clubOwner:club:settings:subscription_access:back ]
+
+  clubOwner:club:back:
+    - [ clubOwner:club:back ]
+  clubOwner:createClub:confirm:
+    - [ clubOwner:create_event:confirm ]
+    - [ clubOwner:create_event:refill ]
+    - [ clubOwner:club:back ]
+  clubOwner:event:menu:
+    - [ clubOwner:event:settings ]
+    - [ clubOwner:event:mailing ]
+    - [ clubOwner:event:users ]
+    - [ clubOwner:event:delete ]
+    - [ clubOwner:events:back ]
+  clubOwner:event:back:
+    - [ clubOwner:event:back ]
+  clubOwner:event:settings:
+    - [ clubOwner:event:settings:edit_name ]
+    - [ clubOwner:event:settings:edit_description ]
+    - [ clubOwner:event:settings:edit_after_reg_text ]
+    - [ clubOwner:event:settings:edit:max_participants ]
+    - [ clubOwner:event:back ]
+  clubOwner:event:settings:back:
+    - [ clubOwner:event:settings:back ]
+  clubOwner:event:delete:
+    - [ clubOwner:event:delete:accept ]
+    - [ clubOwner:event:delete:decline ]
+    - [ clubOwner:event:back ]
+  clubOwner:event:delete:back:
+    - [ clubOwner:events:back ]
+  clubOwner:isMailingCorrect:
+    - [ clubOwner:confirmMailing, clubOwner:cancelMailing ]
+  clubOwner:event:mailing:
+    - [ clubOwner:event:mailing:registered ]
+    - [ clubOwner:event:mailing:visited ]
+    - [ clubOwner:event:back ]
+  clubOwner:event:mailing:back:
+    - [ clubOwner:event:mailing:back ]
+
+  admin:menu:
+    - [ admin:clubs ]
+    - [ admin:create_club ]
+    - [ admin:attendance_report ]
+    - [ mainMenu:back ]
+  admin:backToMenu:
+    - [ admin:back_to_menu ]
+  admin:clubs:back:
+    - [ admin:clubs:back ]
+  admin:club:menu:
+    - [ admin:club:add_owner ]
+    - [ admin:club:del_owner ]
+    - [ admin:club:qr_allowed ]
+    - [ admin:club:subscription_require_allowed ]
+    - [ admin:club:roles ]
+    - [ admin:club:delete ]
+    - [ admin:clubs:back ]
+  admin:club:roles:
+    - [ admin:club:back ]
+  admin:club:back:
+    - [ admin:club:back ]

@@ -11,7 +11,7 @@ from uuid import uuid4
 import pytest
 from aiogram import Bot
 from aiogram.exceptions import TelegramForbiddenError, TelegramNetworkError, TelegramRetryAfter
-from aiogram.methods import AnswerCallbackQuery, SendDocument, SendMessage
+from aiogram.methods import AnswerCallbackQuery, SendDocument, SendMessage, SendPhoto
 from aiogram.types import Update
 from alembic import command
 from alembic.config import Config
@@ -95,7 +95,7 @@ class FakeBot(Bot):
         if isinstance(method, AnswerCallbackQuery):
             self.answered.append(method)
             return True
-        assert isinstance(method, SendMessage | SendDocument), type(method)
+        assert isinstance(method, SendMessage | SendDocument | SendPhoto), type(method)
         if self.error:
             raise self.error
         self.sent.append(method)
@@ -107,7 +107,7 @@ async def enqueue(sessions, *, kind="club.created", recipient=LEADER, **values):
         row = Outbox(
             kind=kind,
             recipient_telegram_id=recipient,
-            payload={"public_id": "cinema"},
+            payload={"public_id": "cinema", "name": "Киноклуб"},
             dedupe_key=uuid4().hex,
             **values,
         )
@@ -264,7 +264,15 @@ def test_bootstrap_notification_is_delivered_once_and_card_button_works(runtime_
             await worker.process_outbox(sessions, bot, item, settings)
             assert len(bot.sent) == 1
             message = bot.sent[0]
-            assert message.chat_id == LEADER and "создан" in message.text
+            assert isinstance(message, SendMessage)
+            assert message.chat_id == LEADER
+            assert message.text == (
+                "Клуб <b>Киноклуб</b> успешно создан!"
+                "\n\nУровень — Seed. Ты назначен лидером.\n\n"
+                "Описание, обложку, ссылки и публичную команду можно заполнить в разделе "
+                "«Мои клубы → Профиль». Публичная команда и права организаторов "
+                "настраиваются отдельно."
+            )
             buttons = [button for row in message.reply_markup.inline_keyboard for button in row]
             assert any(
                 button.url == "https://t.me/offline_test_bot?start=c_cinema" for button in buttons
@@ -294,7 +302,10 @@ def test_bootstrap_notification_is_delivered_once_and_card_button_works(runtime_
             )
             dispatcher = build_dispatcher(sessions, settings)
             await dispatcher.feed_update(bot, update)
-            assert "Управление" in bot.sent[-1].text
+            assert isinstance(bot.sent[-1], SendPhoto)
+            assert bot.sent[-1].caption.startswith(
+                "Клуб: <b>Киноклуб</b>\n\n<u>Организаторы:</u>\n"
+            )
             assert any(
                 button.callback_data == "editmenu:cinema"
                 for row in bot.sent[-1].reply_markup.inline_keyboard

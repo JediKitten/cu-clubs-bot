@@ -20,6 +20,7 @@ from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.engine import make_url
 
+from cu_clubs import legacy
 from cu_clubs.config import Settings
 from cu_clubs.db import make_database
 from cu_clubs.models import Outbox, TelegramUpdate
@@ -163,10 +164,11 @@ async def deliver(bot: Bot, item: dict, settings: Settings):
         )
         return await bot.send_message(
             item["recipient"],
-            "Твой клуб «Киноклуб» создан. Уровень — Seed. Ты назначен лидером.\n\n"
+            legacy.club_created_text(club["name"]) + "\n\nУровень — Seed. Ты назначен лидером.\n\n"
             "Описание, обложку, ссылки и публичную команду можно заполнить в разделе "
-            "«Управление клубом → Профиль клуба». Публичная команда и права организаторов "
+            "«Мои клубы → Профиль». Публичная команда и права организаторов "
             "настраиваются отдельно.",
+            parse_mode="HTML",
             reply_markup=keyboard,
         )
     if item["kind"] == "backup.ready":
