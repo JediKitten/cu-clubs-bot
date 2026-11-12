@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: cu_clubs
+          POSTGRES_PASSWORD: ci-only
+          POSTGRES_DB: cu_clubs_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U cu_clubs -d cu_clubs_test"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql+psycopg://cu_clubs:ci-only@127.0.0.1:5432/cu_clubs_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.13.7"
+          python-version: "3.12"
+          enable-cache: true
+      - run: uv sync --locked
+      - run: uv run --frozen ruff check .
+      - run: uv run --frozen ruff format --check .
+      - run: uv run --frozen pytest
+      - name: Build application image
+        run: docker build --tag cu-clubs:ci .
+      - name: Smoke test application image with PostgreSQL
+        shell: bash
+        run: |
+          trap 'docker rm --force cu-clubs-api-smoke >/dev/null 2>&1 || true' EXIT
+          docker run --detach --rm --name cu-clubs-api-smoke --network host \
+            --env CU_CLUBS_HOST=0.0.0.0 \
+            --env CU_CLUBS_ENVIRONMENT=test \
+            --env CU_CLUBS_DATABASE_URL="$TEST_DATABASE_URL" \
+            --env CU_CLUBS_EXTERNAL_DELIVERY_ENABLED=false \
+            cu-clubs:ci
+          curl --fail --silent --show-error --retry 20 --retry-connrefused --retry-delay 1 \
+            http://127.0.0.1:8000/health/live
+          curl --fail --silent --show-error http://127.0.0.1:8000/health/ready

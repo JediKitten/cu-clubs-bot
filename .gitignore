@@ -1,0 +1,26 @@
+.DS_Store
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.cache/
+*.egg-info/
+build/
+dist/
+.coverage
+htmlcov/
+
+# Local configuration, OAuth tokens, input files and database backups.
+.env
+.env.*
+!.env.example
+secrets/
+credentials/
+backups/
+*.dump
+*.backup
+
+# Local source specifications contain internal project references.
+docs/development-spec.md
+docs/specification.md

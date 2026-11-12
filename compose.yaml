@@ -1,0 +1,40 @@
+name: cu-clubs
+
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-cu_clubs}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local-dev-only}
+      POSTGRES_DB: ${POSTGRES_DB:-cu_clubs}
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: .
+    environment:
+      CU_CLUBS_ENVIRONMENT: local
+      CU_CLUBS_HOST: 0.0.0.0
+      CU_CLUBS_PORT: 8000
+      CU_CLUBS_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-cu_clubs}:${POSTGRES_PASSWORD:-local-dev-only}@db:5432/${POSTGRES_DB:-cu_clubs}
+      CU_CLUBS_EXTERNAL_DELIVERY_ENABLED: "false"
+    ports:
+      - "127.0.0.1:8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=5)"]
+      interval: 15s
+      timeout: 6s
+      retries: 3
+
+volumes:
+  postgres_data:
