@@ -8,6 +8,9 @@ x-app: &app
     CU_CLUBS_DATABASE_URL: postgresql+psycopg://cu_clubs:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}@db:5432/cu_clubs
     CU_CLUBS_HOST: 0.0.0.0
     CU_CLUBS_BACKUP_DIRECTORY: /backups
+    CU_CLUBS_GOOGLE_CREDENTIALS_PATH: /run/cu-clubs-secrets/google-user.json
+  volumes:
+    - google_credentials:/run/cu-clubs-secrets
   depends_on:
     db:
       condition: service_healthy
@@ -44,6 +47,7 @@ services:
     command: [cu-clubs, worker]
     volumes:
       - backups:/backups
+      - google_credentials:/run/cu-clubs-secrets
     healthcheck:
       test: [CMD, python, -c, "import os,time; assert time.time()-os.path.getmtime('/tmp/cu-clubs-worker-heartbeat') < 240"]
       interval: 30s
@@ -54,3 +58,4 @@ services:
 volumes:
   database:
   backups:
+  google_credentials:
