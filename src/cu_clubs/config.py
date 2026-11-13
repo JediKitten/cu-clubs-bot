@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     # Numeric IDs only. Loading Settings never assigns roles or writes to the database.
     bootstrap_admin_ids: list[PositiveInt] = Field(default_factory=list)
     bootstrap_leader_telegram_id: PositiveInt | None = None
+    test_allow_unverified_leaders: bool = False
 
     external_delivery_enabled: bool = False
     telegram_bot_token: SecretStr | None = None
@@ -53,6 +54,12 @@ class Settings(BaseSettings):
     google_credentials_path: Path | None = None
     google_spreadsheet_id: str | None = None
     google_sheet_name: str = "Calendar 2026"
+    calendar_sync_enabled: bool = False
+    calendar_allow_writes: bool = False
+    calendar_test_spreadsheet_id: str | None = None
+    calendar_sync_interval_seconds: int = Field(default=60, ge=15, le=3600)
+    calendar_sync_batch_size: int = Field(default=10, ge=1, le=50)
+    calendar_digest_color: str = Field(default="#FF00FF", pattern=r"^#[0-9A-Fa-f]{6}$")
 
     # Daily backup time is interpreted in the configured timezone.
     backup_recipient_telegram_id: PositiveInt | None = None
@@ -82,6 +89,8 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_delivery_credentials(self) -> Self:
+        if self.test_allow_unverified_leaders and self.environment != "test":
+            raise ValueError("Unverified leaders are allowed only in the test environment")
         if self.external_delivery_enabled:
             if not self.telegram_bot_token or not self.telegram_bot_username:
                 raise ValueError("External delivery requires a Telegram token and bot username")

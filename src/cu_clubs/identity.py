@@ -105,6 +105,9 @@ class IdentityService:
         return _profile(account.person, telegram_id)
 
     async def _lock_person(self, telegram_id: int) -> Person:
+        await self.session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended('cu-clubs:identity-attendance',0))")
+        )
         telegram_id = _telegram_id(telegram_id)
         await self.session.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": telegram_id})
         person = await self.session.scalar(
@@ -130,10 +133,10 @@ class IdentityService:
             text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
             {"key": f"identity:{login}"},
         )
-        occupied = await self.session.scalar(
-            select(Person.id).where(Person.time_login == login, Person.id != person.id)
-        )
-        if occupied is not None:
+        from cu_clubs.identity_merge import imported_person
+
+        _existing, occupied = await imported_person(self.session, login, person.id)
+        if occupied:
             raise ValidationError("Эта почта уже привязана к другому профилю")
         if person.verified_at is not None and person.time_login == login:
             raise ValidationError("Эта почта уже подтверждена")
@@ -228,14 +231,14 @@ class IdentityService:
             text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
             {"key": f"identity:{challenge.time_login}"},
         )
-        occupied = await self.session.scalar(
-            select(Person.id).where(
-                Person.time_login == challenge.time_login, Person.id != person.id
-            )
-        )
-        if occupied is not None:
+        from cu_clubs.identity_merge import imported_person, merge_into_imported
+
+        existing, occupied = await imported_person(self.session, challenge.time_login, person.id)
+        if occupied:
             challenge.invalidated_at = self.now
             return {"status": "occupied"}
+        if existing is not None:
+            person = await merge_into_imported(self.session, person, existing, telegram_id)
         person.full_name, person.time_login = challenge.full_name, challenge.time_login
         person.kind, person.verified_at = "student", self.now
         challenge.consumed_at = self.now
@@ -271,9 +274,10 @@ async def verification_delivery(
 
 
 class AdminService:
-    def __init__(self, session: AsyncSession):
+    def __init__(self, session: AsyncSession, *, allow_unverified_leaders: bool = False):
         self.session = session
         self.clubs = ClubService(session)
+        self.allow_unverified_leaders = allow_unverified_leaders
 
     async def _authorize(self, actor: int) -> None:
         if not await self.clubs.is_admin(actor):
@@ -283,10 +287,9 @@ class AdminService:
 
     async def _leader(self, telegram_id: int) -> TelegramAccount:
         account = await self.clubs._account(telegram_id)
-        if (
-            account is None
-            or account.person.verified_at is None
-            or account.person.kind != "student"
+        if account is None or (
+            not self.allow_unverified_leaders
+            and (account.person.verified_at is None or account.person.kind != "student")
         ):
             raise ValidationError("Лидер должен сначала подтвердить университетскую почту в боте")
         return account

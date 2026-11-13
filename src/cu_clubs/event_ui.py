@@ -147,6 +147,8 @@ async def _card(service, user_id, public_id, *, via_link=False) -> Screen:
     event = await service.get_event(public_id, user_id, via_link=via_link)
     suffix = ":link" if via_link else ""
     rows = []
+    if event.get("can_attend") and event["status"] in {"published", "held"}:
+        rows.append([("Отметить посещение", f"at:{public_id}")])
     if event["status"] == "published":
         if event["registered"]:
             rows.append([(legacy.text("cancel_registration"), f"evunregask:{public_id}{suffix}")])

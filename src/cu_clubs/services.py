@@ -4,7 +4,7 @@ from typing import Any
 from urllib.parse import urlsplit
 from uuid import UUID
 
-from sqlalchemy import delete, or_, select, text
+from sqlalchemy import delete, func, or_, select, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -45,6 +45,41 @@ class ClubService:
     def __init__(self, session: AsyncSession):
         self.session = session
 
+    async def resolve_telegram_target(self, value: str | int) -> dict:
+        raw = str(value).strip()
+        if raw.startswith("@"):
+            tag = raw[1:]
+            if (
+                not tag
+                or len(tag) > 64
+                or not all(c.isascii() and (c.isalnum() or c == "_") for c in tag)
+            ):
+                raise ValidationError("Пришли @тег или положительный числовой Telegram ID")
+            accounts = list(
+                await self.session.scalars(
+                    select(TelegramAccount)
+                    .where(func.lower(TelegramAccount.username) == tag.lower())
+                    .execution_options(populate_existing=True)
+                )
+            )
+            if len(accounts) != 1:
+                raise ValidationError(
+                    "По этому тегу нет однозначного профиля. Попроси человека открыть бота "
+                    "и нажать /start либо укажи его Telegram ID."
+                )
+            account = accounts[0]
+        else:
+            if not raw.isascii() or not raw.isdigit():
+                raise ValidationError("Пришли @тег или положительный числовой Telegram ID")
+            account = await self._account(_telegram_id(int(raw)))
+            if account is None:
+                raise ValidationError("Попроси человека сначала открыть бота и нажать /start")
+        return {
+            "telegram_id": account.telegram_id,
+            "full_name": account.person.full_name,
+            "username": account.username,
+        }
+
     async def _account(self, telegram_id: int) -> TelegramAccount | None:
         return await self.session.scalar(
             select(TelegramAccount)
@@ -62,6 +97,9 @@ class ClubService:
     async def get_or_create_person(
         self, telegram_id: int, full_name: str, username: str | None = None
     ) -> dict:
+        await self.session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended('cu-clubs:identity-attendance',0))")
+        )
         telegram_id = _telegram_id(telegram_id)
         await self.session.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": telegram_id})
         account = await self._account(telegram_id)

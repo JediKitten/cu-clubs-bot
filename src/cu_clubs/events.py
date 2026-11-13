@@ -207,6 +207,14 @@ class EventService:
         if not await self._can_manage(actor_id, event, leaders_only=leaders_only):
             raise PermissionDenied("Нет права управлять этой встречей.")
 
+    async def _can_attend(self, actor_id, event):
+        if actor_id is None:
+            return False
+        for club in await self._event_clubs(event):
+            if (await self.clubs.permissions(actor_id, club.public_id))["record_attendance"]:
+                return True
+        return False
+
     async def _person(self, actor_id: int) -> Person:
         account = await self.clubs._account(actor_id)
         if account is None:
@@ -284,6 +292,7 @@ class EventService:
             registered=bool(registration and registration.status == "active"),
             registered_at=registration.registered_at.isoformat() if registration else None,
             can_manage=await self._can_manage(actor_id, event),
+            can_attend=await self._can_attend(actor_id, event),
             can_reschedule=await self._can_manage(actor_id, event, leaders_only=True),
             start_registration_snapshot=event.start_registration_snapshot,
             last_editor_telegram_id=event.last_editor_telegram_id,

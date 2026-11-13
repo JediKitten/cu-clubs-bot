@@ -21,3 +21,4 @@ class Screen:
     markup: Any = None
     photo: Any = None
     banner_role: str | None = None
+    document: Any = None

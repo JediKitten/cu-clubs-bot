@@ -93,6 +93,29 @@ class MemoryService:
         self.db = session.db
         assert self.db.active
 
+    async def resolve_telegram_target(self, value):
+        raw = str(value).strip()
+        if raw.startswith("@"):
+            ids = [
+                key
+                for key, person in self.db.people.items()
+                if (person.get("username") or "").lower() == raw[1:].lower()
+            ]
+        else:
+            ids = (
+                [int(raw)] if raw.isascii() and raw.isdigit() and int(raw) in self.db.people else []
+            )
+        if len(ids) != 1:
+            raise ValidationError(
+                "Пришли известный @тег или числовой Telegram ID; человек должен открыть бота."
+            )
+        person = self.db.people[ids[0]]
+        return {
+            "telegram_id": ids[0],
+            "full_name": person["full_name"],
+            "username": person.get("username"),
+        }
+
     async def get_or_create_person(self, user_id, full_name, username):
         self.db.people[user_id] = {"full_name": full_name, "username": username}
         return self.db.people[user_id]

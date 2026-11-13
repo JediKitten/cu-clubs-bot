@@ -13,11 +13,14 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 
 from cu_clubs import legacy
+from cu_clubs.attendance_ui import handle_attendance
+from cu_clubs.calendar_ui import handle_calendar
 from cu_clubs.event_ui import handle_events
 from cu_clubs.identity_ui import handle_identity
 from cu_clubs.models import Conversation, TelegramUpdate
 from cu_clubs.screens import ScreenManager
 from cu_clubs.services import ClubNotFound, ClubService, PermissionDenied, ValidationError
+from cu_clubs.telegram_files import attendance_upload
 from cu_clubs.template_ui import handle_templates
 
 UNAVAILABLE = "Этот раздел ещё в разработке. Сейчас доступны клубы и управление профилем клуба."
@@ -380,7 +383,9 @@ def build_dispatcher(sessionmaker: Any, settings: Any) -> Dispatcher:
         share_id = None
         text = ""
         markup = None
+        document = None
         try:
+            upload = await attendance_upload(sessionmaker, bot, user.id, message, settings)
             async with sessionmaker() as session, session.begin():
                 stored_update = await session.get(
                     TelegramUpdate, event_update.update_id, with_for_update=True
@@ -400,7 +405,18 @@ def build_dispatcher(sessionmaker: Any, settings: Any) -> Dispatcher:
                     and command[1].startswith("e_")
                 )
                 flow = None
-                if start_event:
+                start_qr = (
+                    message
+                    and len(command) == 2
+                    and command[0].split("@", 1)[0] == "/start"
+                    and command[1].startswith("a_")
+                )
+                if start_qr:
+                    _reset(state)
+                    flow = await handle_attendance(
+                        session, user.id, state, None, f"aq:{command[1][2:]}", settings
+                    )
+                elif start_event:
                     _reset(state)
                     flow = await handle_events(
                         session, user.id, state, None, f"event:{command[1][2:]}:link", settings
@@ -410,12 +426,21 @@ def build_dispatcher(sessionmaker: Any, settings: Any) -> Dispatcher:
                         session, user.id, state, message, data, settings, person
                     )
                     if flow is None:
+                        flow = await handle_attendance(
+                            session, user.id, state, message, data, settings, upload=upload
+                        )
+                    if flow is None:
+                        flow = await handle_calendar(
+                            session, user.id, state, message, data, settings
+                        )
+                    if flow is None:
                         flow = await handle_templates(
                             session, user.id, state, message, data, settings
                         )
                     if flow is None:
                         flow = await handle_events(session, user.id, state, message, data, settings)
                 if flow is not None:
+                    document = flow.document
                     text, markup, photo, banner_role = (
                         flow.text,
                         flow.markup,
@@ -454,11 +479,18 @@ def build_dispatcher(sessionmaker: Any, settings: Any) -> Dispatcher:
                     public_id = state.payload["club"]
                     await _leader_access(service, user.id, public_id)
                     raw = (message.text or "").strip()
-                    if not raw.isascii() or not raw.isdigit() or not 0 < int(raw) < 2**63:
-                        raise ValidationError("Пришли положительный числовой Telegram ID.")
+                    target = await service.resolve_telegram_target(raw)
                     state.state = "organizer_preview"
-                    state.payload = {"club": public_id, "target": int(raw), "token": uuid4().hex}
-                    text = f"Добавить организатора {raw} со всеми тремя правами?"
+                    state.payload = {
+                        "club": public_id,
+                        "target": target["telegram_id"],
+                        "target_tag": raw if raw.startswith("@") else None,
+                        "token": uuid4().hex,
+                    }
+                    text = (
+                        f"Добавить организатора {escape(target['full_name'])} · "
+                        f"{target['telegram_id']} со всеми тремя правами?"
+                    )
                     markup = _confirmation("orgsave", state)
                 elif message:
                     if state.state in {"club_profile_preview", "organizer_preview"}:
@@ -492,6 +524,9 @@ def build_dispatcher(sessionmaker: Any, settings: Any) -> Dispatcher:
                     _, markup = await _clubs(service, manage=True, user_id=user.id)
                     markup.inline_keyboard.insert(
                         0, [InlineKeyboardButton(text="Создать клуб", callback_data="adminnew")]
+                    )
+                    markup.inline_keyboard.insert(
+                        1, [InlineKeyboardButton(text="Календарь", callback_data="calendar")]
                     )
                 elif data == "profile":
                     text = legacy.personal_account_text(person["full_name"]) + (
@@ -617,13 +652,22 @@ def build_dispatcher(sessionmaker: Any, settings: Any) -> Dispatcher:
                             "token": uuid4().hex,
                         },
                     )
-                    text = "Пришли числовой Telegram ID. Человек должен сначала открыть этого бота."
+                    text = (
+                        "Пришли @тег или числовой Telegram ID. "
+                        "Человек должен сначала открыть этого бота."
+                    )
                     markup = keyboard([("Отмена", f"cancel:{state.payload['token']}")])
                 elif (
                     data == f"orgsave:{state.payload.get('token')}"
                     and state.state == "organizer_preview"
                 ):
                     public_id, target = state.payload["club"], state.payload["target"]
+                    if state.payload.get("target_tag"):
+                        resolved = await service.resolve_telegram_target(
+                            state.payload["target_tag"]
+                        )
+                        if resolved["telegram_id"] != target:
+                            raise ValidationError("Тег изменился. Выбери организатора заново.")
                     await service.set_organizer(user.id, public_id, target)
                     _reset(state)
                     text, markup = await _organizers(service, user.id, public_id)
@@ -702,6 +746,8 @@ def build_dispatcher(sessionmaker: Any, settings: Any) -> Dispatcher:
         )
         if callback:
             await callback.answer()
+        if document is not None:
+            await bot.send_document(user.id, document)
 
     router.message.register(dispatch)
     router.callback_query.register(dispatch)

@@ -70,11 +70,21 @@ async def handle_identity(session, user_id, state, message, data, settings, pers
     if data == "profile":
         person = person or await _identity(session, settings).profile(user_id)
         verified = bool(person.get("verified_at"))
+        guest = person.get("kind") == "guest"
         text = legacy.personal_account_text(
-            person["full_name"], "student" if verified and person.get("kind") == "student" else None
+            person["full_name"],
+            "external_user"
+            if guest
+            else "student"
+            if verified and person.get("kind") == "student"
+            else None,
         )
         rows = []
-        if verified:
+        rows.append([("Мой QR", "aqpersonal")])
+        if guest:
+            text += "\n\nПрофиль внешнего гостя. Почта ЦУ не требуется."
+            rows.append([("Я студент ЦУ", "auth:profile")])
+        elif verified:
             text += (
                 f"\n\nПочта подтверждена: {escape(person['time_login'])}@edu.centraluniversity.ru"
             )
@@ -147,7 +157,7 @@ async def handle_identity(session, user_id, state, message, data, settings, pers
                 raise ValidationError("Эта кнопка устарела. Продолжи текущий диалог.")
             _validate_token(f"adminpick:{parts[1]}", "adminpick", state)
             data = f"adminpick:{parts[2]}"
-        return await _admin(session, user_id, state, message, data)
+        return await _admin(session, user_id, state, message, data, settings)
     return None
 
 
@@ -163,7 +173,7 @@ def _level_screen(state):
     )
 
 
-async def _admin(session, user_id, state, message, data):
+async def _admin(session, user_id, state, message, data, settings):
     if data == "adminnew":
         state.state, state.payload = "admin_name", {"token": uuid4().hex}
         return _admin_screen(legacy.text("input_club_name"), [(legacy.text("cancel"), "admin")])
@@ -182,7 +192,7 @@ async def _admin(session, user_id, state, message, data):
         if action == "adminlevel":
             return _level_screen(state)
         return _admin_screen(
-            "Пришли Telegram ID нового лидера. Его студенческая почта должна быть подтверждена.",
+            "Пришли @тег или Telegram ID нового лидера. Человек должен сначала открыть бота.",
             [(legacy.text("cancel"), "admin")],
         )
     if message and state.state == "admin_name":
@@ -202,7 +212,7 @@ async def _admin(session, user_id, state, message, data):
         if state.payload["action"] == "create":
             state.state = "admin_leader"
             return _admin_screen(
-                "Пришли Telegram ID лидера. Его студенческая почта должна быть подтверждена.",
+                "Пришли @тег или Telegram ID лидера. Человек должен сначала открыть бота.",
                 [(legacy.text("cancel"), "admin")],
             )
         state.state = "admin_preview"
@@ -213,11 +223,19 @@ async def _admin(session, user_id, state, message, data):
         )
     if message and state.state == "admin_leader":
         raw = (message.text or "").strip()
-        if not raw.isascii() or not raw.isdigit() or not 0 < int(raw) < 2**63:
-            raise ValidationError("Нужен положительный числовой Telegram ID")
-        state.state, state.payload = "admin_preview", {**state.payload, "leader": int(raw)}
+        target = await ClubService(session).resolve_telegram_target(raw)
+        state.state, state.payload = (
+            "admin_preview",
+            {
+                **state.payload,
+                "leader": target["telegram_id"],
+                "leader_tag": raw if raw.startswith("@") else None,
+            },
+        )
         p = state.payload
-        text = f"Лидер: {raw}"
+        text = f"Лидер: {escape(target['full_name'])} · {target['telegram_id']}"
+        if target["username"]:
+            text += f" · @{escape(target['username'])}"
         if p["action"] == "create":
             text = f"Клуб: {escape(p['name'])}\nУровень: {escape(p['level'])}\n" + text
         return _admin_screen(
@@ -227,7 +245,17 @@ async def _admin(session, user_id, state, message, data):
         )
     if data == "adminsave" and state.state == "admin_preview":
         p = state.payload
-        service = AdminService(session)
+        service = AdminService(
+            session,
+            allow_unverified_leaders=(
+                getattr(settings, "environment", None) == "test"
+                and getattr(settings, "test_allow_unverified_leaders", False)
+            ),
+        )
+        if p.get("leader_tag"):
+            target = await ClubService(session).resolve_telegram_target(p["leader_tag"])
+            if target["telegram_id"] != p["leader"]:
+                raise ValidationError("Тег изменился. Выбери лидера заново.")
         if p["action"] == "create":
             club = await service.create_club(user_id, p["name"], p["level"], p["leader"])
             text = legacy.club_created_text(club["name"])

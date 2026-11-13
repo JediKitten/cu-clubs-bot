@@ -5,7 +5,7 @@ import asyncio
 from alembic import context
 from sqlalchemy import Connection
 
-from cu_clubs import event_models, identity_models, screens  # noqa: F401
+from cu_clubs import attendance_models, calendar_models, event_models, identity_models, screens  # noqa: F401
 from cu_clubs.config import Settings
 from cu_clubs.db import make_database
 from cu_clubs.models import Base

@@ -272,7 +272,28 @@ async def deliver_domain_notice(sessions, bot: Bot, item: dict, settings: Settin
 async def process_outbox(sessions, bot: Bot, item: dict, settings: Settings) -> None:
     values = {"lease_until": None}
     try:
-        if item["kind"] == "email.verification":
+        if item["kind"] == "calendar.digest.notice":
+            from cu_clubs.events import EventService
+
+            async with sessions() as session:
+                event = await EventService(session).get_event(
+                    item["payload"]["event"], item["recipient"]
+                )
+                if not event["can_manage"]:
+                    raise PermissionDenied("Calendar notice is no longer authorized")
+                text = "Встреча выделена для дайджеста в календаре. Проверь анонс.\n\n" + escape(
+                    event["title"]
+                )
+            msg = await ScreenManager(sessions, bot).show(
+                item["recipient"],
+                text,
+                keyboard([("Открыть встречу", f"event:{event['public_id']}")]),
+                legacy.banner("club-owner"),
+                banner_role="club-owner",
+                force_new=True,
+            )
+            result = SimpleNamespace(message_id=msg)
+        elif item["kind"] == "email.verification":
             if not settings.verification_secret:
                 raise ValueError("Email verification key is unavailable")
             async with sessions() as session:
@@ -386,6 +407,18 @@ async def prepare_backup(sessions, settings: Settings, *, force: bool = False) -
     return True
 
 
+async def calendar_loop(sessions, settings):
+    from cu_clubs.calendar import CalendarSync
+
+    sync = CalendarSync(sessions, settings)
+    while True:
+        try:
+            await sync.tick(limit=settings.calendar_sync_batch_size)
+        except Exception as error:
+            logger.warning("Calendar synchronization failed: %s", type(error).__name__)
+        await asyncio.sleep(settings.calendar_sync_interval_seconds)
+
+
 async def run_worker(settings: Settings) -> None:
     if not settings.external_delivery_enabled:
         raise ValueError("Worker requires external delivery to be enabled explicitly")
@@ -394,10 +427,13 @@ async def run_worker(settings: Settings) -> None:
     dispatcher = build_dispatcher(sessions, settings)
     last_backup_check = 0.0
     polling = None
+    calendar_task = None
     try:
         identity = await bot.get_me()
         if identity.username != settings.telegram_bot_username:
             raise ValueError("Telegram token belongs to a different bot")
+        if settings.calendar_sync_enabled:
+            calendar_task = asyncio.create_task(calendar_loop(sessions, settings))
         if settings.telegram_transport == "polling":
             webhook = await bot.get_webhook_info()
             if webhook.url:
@@ -453,6 +489,10 @@ async def run_worker(settings: Settings) -> None:
             if not item and not outgoing:
                 await asyncio.sleep(0.5)
     finally:
+        if calendar_task is not None:
+            calendar_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await calendar_task
         if polling is not None:
             polling.cancel()
             with contextlib.suppress(asyncio.CancelledError):
