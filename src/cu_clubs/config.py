@@ -47,6 +47,7 @@ class Settings(BaseSettings):
     smtp_sender: str | None = None
     smtp_use_ssl: bool = False
     smtp_starttls: bool = True
+    verification_secret: SecretStr | None = Field(default=None, min_length=32)
 
     google_auth_mode: Literal["oauth", "service_account"] = "oauth"
     google_credentials_path: Path | None = None

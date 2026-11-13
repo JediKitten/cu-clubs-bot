@@ -5,7 +5,9 @@ import contextlib
 import logging
 import os
 from datetime import UTC, datetime, timedelta
+from html import escape
 from pathlib import Path
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 from aiogram import Bot
@@ -23,8 +25,14 @@ from sqlalchemy.engine import make_url
 from cu_clubs import legacy
 from cu_clubs.config import Settings
 from cu_clubs.db import make_database
+from cu_clubs.identity import verification_delivery
+from cu_clubs.inbox_crypto import open_update, seal_update
+from cu_clubs.integrations.mail import send_verification_code
 from cu_clubs.models import Outbox, TelegramUpdate
+from cu_clubs.screens import ScreenManager
+from cu_clubs.services import ClubService, PermissionDenied
 from cu_clubs.telegram import build_dispatcher
+from cu_clubs.ui_common import keyboard
 
 logger = logging.getLogger(__name__)
 MAX_ATTEMPTS = 8
@@ -34,7 +42,7 @@ def utcnow() -> datetime:
     return datetime.now(UTC)
 
 
-async def poll_updates(bot: Bot, sessions) -> None:
+async def poll_updates(bot: Bot, sessions, settings: Settings | None = None) -> None:
     """Test transport: commit received updates before acknowledging them to Telegram."""
     async with sessions() as session:
         latest = await session.scalar(select(func.max(TelegramUpdate.update_id)))
@@ -60,7 +68,10 @@ async def poll_updates(bot: Bot, sessions) -> None:
                     [
                         {
                             "update_id": item.update_id,
-                            "payload": item.model_dump(mode="json", exclude_none=True),
+                            "payload": seal_update(
+                                item.model_dump(mode="json", exclude_none=True),
+                                settings.verification_secret if settings else None,
+                            ),
                         }
                         for item in updates
                     ]
@@ -157,14 +168,15 @@ async def deliver(bot: Bot, item: dict, settings: Settings):
                 ],
                 [
                     InlineKeyboardButton(
-                        text="Заполнить карточку", callback_data="manageclub:cinema"
+                        text="Заполнить карточку", callback_data=f"manageclub:{club['public_id']}"
                     )
                 ],
             ]
         )
         return await bot.send_message(
             item["recipient"],
-            legacy.club_created_text(club["name"]) + "\n\nУровень — Seed. Ты назначен лидером.\n\n"
+            legacy.club_created_text(club["name"])
+            + f"\n\nУровень — {club.get('level', 'Seed')}. Ты назначен лидером.\n\n"
             "Описание, обложку, ссылки и публичную команду можно заполнить в разделе "
             "«Мои клубы → Профиль». Публичная команда и права организаторов "
             "настраиваются отдельно.",
@@ -189,10 +201,93 @@ async def deliver(bot: Bot, item: dict, settings: Settings):
     raise ValueError("Unknown outbox delivery kind")
 
 
+async def deliver_domain_notice(sessions, bot: Bot, item: dict, settings: Settings):
+    kind, payload = item["kind"], item["payload"]
+    if kind.startswith("event."):
+        from cu_clubs.event_ui import event_text
+        from cu_clubs.events import EventService
+
+        async with sessions() as session:
+            service = EventService(session)
+            if kind == "event.invitation":
+                event = next(
+                    (
+                        event
+                        for event in await service.pending_invitations(item["recipient"])
+                        if event["invitation_id"] == payload["invitation"]
+                    ),
+                    None,
+                )
+                if event is None:
+                    return SimpleNamespace(message_id=None)
+                heading = "Приглашение провести совместную встречу"
+                markup = keyboard([("Открыть приглашение", f"evreview:{payload['invitation']}")])
+            else:
+                try:
+                    event = await service.get_event(payload["event"], item["recipient"])
+                except (PermissionDenied, ValueError):
+                    return SimpleNamespace(message_id=None)
+                if (
+                    kind == "event.published"
+                    and not event["can_manage"]
+                    and not event["registered"]
+                ):
+                    subscriptions = [
+                        await ClubService(session).get_subscription(
+                            item["recipient"], club["public_id"]
+                        )
+                        for club in event["clubs"]
+                    ]
+                    if (
+                        event["status"] != "published"
+                        or event["visibility"] != "open"
+                        or not any(subscriptions)
+                    ):
+                        return SimpleNamespace(message_id=None)
+                heading = {
+                    "event.published": "Новая встреча",
+                    "event.changed": "Информация о встрече изменилась",
+                    "event.cancelled": "Встреча отменена",
+                    "event.partner_declined": "Партнёр отклонил приглашение",
+                }[kind]
+                markup = keyboard([("Открыть встречу", f"event:{payload['event']}:link")])
+            text = f"<b>{heading}</b>\n\n" + event_text(event)
+        role = "events"
+    else:
+        role = "club-owner"
+        title = escape(payload["name"])
+        level = escape(payload["level"])
+        text = (
+            f"Клуб: <b>{title}</b>\nУстановлен уровень: {level}"
+            if kind == "club.level.changed"
+            else f"Ты назначен лидером клуба <b>{title}</b>.\nУровень: {level}"
+        )
+        markup = keyboard([("Открыть клуб", f"manageclub:{payload['public_id']}")])
+    message_id = await ScreenManager(sessions, bot).show(
+        item["recipient"], text, markup, legacy.banner(role), banner_role=role, force_new=True
+    )
+    return SimpleNamespace(message_id=message_id)
+
+
 async def process_outbox(sessions, bot: Bot, item: dict, settings: Settings) -> None:
     values = {"lease_until": None}
     try:
-        result = await deliver(bot, item, settings)
+        if item["kind"] == "email.verification":
+            if not settings.verification_secret:
+                raise ValueError("Email verification key is unavailable")
+            async with sessions() as session:
+                delivery = await verification_delivery(
+                    session,
+                    item["payload"]["challenge_id"],
+                    settings.verification_secret.get_secret_value(),
+                )
+            if delivery:
+                await send_verification_code(settings, delivery["email"], delivery["code"])
+            result = SimpleNamespace(message_id=None)
+        elif item["kind"].startswith(("event.", "club.level.", "club.leader.")):
+            result = await deliver_domain_notice(sessions, bot, item, settings)
+        else:
+            result = await deliver(bot, item, settings)
         values.update(
             status="sent",
             delivered_at=utcnow(),
@@ -307,7 +402,7 @@ async def run_worker(settings: Settings) -> None:
             webhook = await bot.get_webhook_info()
             if webhook.url:
                 raise ValueError("Polling cannot start while a webhook is configured")
-            polling = asyncio.create_task(poll_updates(bot, sessions))
+            polling = asyncio.create_task(poll_updates(bot, sessions, settings))
         while True:
             if polling is not None and polling.done():
                 polling.result()
@@ -315,8 +410,13 @@ async def run_worker(settings: Settings) -> None:
             item = await claim_inbox(sessions)
             if item:
                 try:
-                    telegram_update = Update.model_validate(item["payload"], context={"bot": bot})
-                    await dispatcher.feed_update(bot, telegram_update)
+                    telegram_update = Update.model_validate(
+                        open_update(item["payload"], settings.verification_secret),
+                        context={"bot": bot},
+                    )
+                    await dispatcher.feed_update(
+                        bot, telegram_update, inbox_attempt=item["attempts"]
+                    )
                     message = telegram_update.message
                     if (
                         message

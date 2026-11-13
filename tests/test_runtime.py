@@ -11,7 +11,15 @@ from uuid import uuid4
 import pytest
 from aiogram import Bot
 from aiogram.exceptions import TelegramForbiddenError, TelegramNetworkError, TelegramRetryAfter
-from aiogram.methods import AnswerCallbackQuery, SendDocument, SendMessage, SendPhoto
+from aiogram.methods import (
+    AnswerCallbackQuery,
+    DeleteMessage,
+    EditMessageMedia,
+    EditMessageText,
+    SendDocument,
+    SendMessage,
+    SendPhoto,
+)
 from aiogram.types import Update
 from alembic import command
 from alembic.config import Config
@@ -95,11 +103,18 @@ class FakeBot(Bot):
         if isinstance(method, AnswerCallbackQuery):
             self.answered.append(method)
             return True
-        assert isinstance(method, SendMessage | SendDocument | SendPhoto), type(method)
+        if isinstance(method, DeleteMessage):
+            return True
+        assert isinstance(
+            method, SendMessage | SendDocument | SendPhoto | EditMessageText | EditMessageMedia
+        ), type(method)
         if self.error:
             raise self.error
         self.sent.append(method)
-        return SimpleNamespace(message_id=900 + len(self.sent))
+        return SimpleNamespace(
+            message_id=getattr(method, "message_id", None) or 900 + len(self.sent),
+            photo=[SimpleNamespace(file_id="OFFLINE_PHOTO")],
+        )
 
 
 async def enqueue(sessions, *, kind="club.created", recipient=LEADER, **values):
@@ -249,6 +264,124 @@ def test_outbox_expired_delivery_becomes_uncertain_without_resending(runtime_dat
             assert row.status == "uncertain" and row.last_error == "ExpiredDeliveryLease"
             assert row.lease_until is None and row.attempts == 1
             assert (await session.get(Outbox, active)).status == "processing"
+
+    run(runtime_database_url, scenario)
+
+
+@pytest.mark.parametrize("change", ["closed", "unsubscribe"])
+def test_queued_announcement_rechecks_current_visibility_and_subscription(
+    runtime_database_url, change
+):
+    from cu_clubs.events import EventService
+
+    async def scenario(sessions, settings):
+        subscriber = 720009
+        async with sessions.begin() as session:
+            clubs = ClubService(session)
+            await clubs.bootstrap([ADMIN], LEADER)
+            await clubs.get_or_create_person(subscriber, "Offline Subscriber")
+            await clubs.set_subscription(subscriber, "cinema", True)
+            service = EventService(session)
+            start = datetime.now(UTC) + timedelta(days=2)
+            event = await service.create_draft(
+                LEADER,
+                "cinema",
+                {
+                    "title": "Тестовая встреча",
+                    "description": "Обсуждаем фильмы",
+                    "starts_at": start,
+                    "ends_at": start + timedelta(hours=2),
+                },
+            )
+            event = await service.publish(LEADER, event["public_id"], event["version"])
+            row = await session.scalar(
+                select(Outbox).where(
+                    Outbox.kind == "event.published", Outbox.recipient_telegram_id == subscriber
+                )
+            )
+            row.status, row.attempts = "processing", 1
+            item = {
+                "id": row.id,
+                "kind": row.kind,
+                "recipient": subscriber,
+                "payload": row.payload,
+                "attempts": 1,
+            }
+            if change == "closed":
+                await service.update_event(
+                    LEADER, event["public_id"], {"visibility": "closed"}, event["version"]
+                )
+            else:
+                await clubs.set_subscription(subscriber, "cinema", False)
+        bot = FakeBot()
+        try:
+            await worker.process_outbox(sessions, bot, item, settings)
+            assert not bot.sent
+            async with sessions() as session:
+                row = await session.get(Outbox, item["id"])
+                assert row.status == "sent" and row.telegram_message_id is None
+        finally:
+            await bot.session.close()
+
+    run(runtime_database_url, scenario)
+
+
+def test_screen_network_failure_does_not_reapply_wizard_answer(runtime_database_url, monkeypatch):
+    from cu_clubs import telegram
+    from cu_clubs.models import Conversation
+
+    class FailedRenderer:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def handle_page(self, callback):
+            return False
+
+        async def show(self, *args, **kwargs):
+            raise TelegramNetworkError(
+                method=SendMessage(chat_id=LEADER, text="offline"), message="offline"
+            )
+
+    async def scenario(sessions, settings):
+        payload = {
+            "update_id": 9901,
+            "message": {
+                "message_id": 81,
+                "date": datetime.now(UTC).timestamp(),
+                "chat": {"id": LEADER, "type": "private"},
+                "from": {"id": LEADER, "is_bot": False, "first_name": "Telegram name"},
+                "text": "Иванов Иван Иванович",
+            },
+        }
+        async with sessions.begin() as session:
+            await ClubService(session).bootstrap([ADMIN], LEADER)
+            session.add(
+                Conversation(
+                    telegram_id=LEADER,
+                    state="auth_fio",
+                    payload={"resume": "profile", "token": "offline"},
+                )
+            )
+            session.add(
+                TelegramUpdate(update_id=9901, payload=payload, status="processing", attempts=1)
+            )
+        monkeypatch.setattr(telegram, "ScreenManager", FailedRenderer)
+        bot = FakeBot()
+        try:
+            with pytest.raises(TelegramNetworkError) as error:
+                await build_dispatcher(sessions, settings).feed_update(
+                    bot, Update.model_validate(payload)
+                )
+            await worker.finish_inbox(sessions, {"update_id": 9901, "attempts": 1}, error.value)
+            async with sessions() as session:
+                state = await session.get(Conversation, LEADER)
+                assert state.state == "auth_login"
+                assert state.payload["full_name"] == "Иванов Иван Иванович"
+                assert "login" not in state.payload
+                assert (await session.get(TelegramUpdate, 9901)).status == "done"
+            assert await worker.claim_inbox(sessions) is None
+        finally:
+            await bot.session.close()
 
     run(runtime_database_url, scenario)
 

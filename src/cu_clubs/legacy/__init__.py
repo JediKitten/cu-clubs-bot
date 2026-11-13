@@ -104,7 +104,10 @@ def owner_club_text(club: dict, owners: list[dict]) -> str:
 def _banner_bytes(role: str) -> bytes:
     if role not in {"auth", "menu", "personal-account", "clubs", "club-owner", "events"}:
         raise ValueError("Unknown original banner role")
-    return files(__package__).joinpath(f"resources/{role}.png").read_bytes()
+    resources = files(__package__).joinpath("resources")
+    manifest = json.loads(resources.joinpath("manifest.json").read_text())
+    filename = manifest["banners"][role].get("upload_file", f"{role}.png")
+    return resources.joinpath(filename).read_bytes()
 
 
 def banner(role: str) -> BufferedInputFile:

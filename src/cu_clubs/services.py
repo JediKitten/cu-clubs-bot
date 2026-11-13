@@ -78,13 +78,18 @@ class ClubService:
             await self.session.flush()
         else:
             person = account.person
-            person.full_name = full_name
+            # A Telegram display name must never overwrite the person's submitted FIO.
+            if person.kind is None and person.time_login is None:
+                person.full_name = full_name
             account.username = username
         return {
             "id": str(person.id),
             "telegram_id": telegram_id,
             "full_name": person.full_name,
             "username": account.username,
+            "kind": person.kind,
+            "verified_at": person.verified_at,
+            "time_login": person.time_login,
         }
 
     async def _club(self, public_id: str, *, lock: bool = False) -> Club:

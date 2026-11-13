@@ -77,8 +77,24 @@ def main() -> None:
         image = DESTINATION / f"{role}.png"
         if image.exists():
             sha = hashlib.sha256(image.read_bytes()).hexdigest()
-            entry.update(status="available", file=image.name, origin="user_original", sha256=sha)
-            resources[image.name] = {"source": "user_original", "sha256": sha}
+            prior = previous.get("banners", {}).get(role, {})
+            origin = prior.get("origin", "user_original")
+            entry.update(status="available", file=image.name, origin=origin, sha256=sha)
+            for key in ("upload_file", "dimensions"):
+                if key in prior:
+                    entry[key] = prior[key]
+            resources[image.name] = {"source": origin, "sha256": sha}
+    for filename, prior in previous.get("resources", {}).items():
+        if (
+            prior.get("source") == "previous_user_original"
+            or prior.get("derived_from") == "menu.png"
+        ):
+            asset = DESTINATION / filename
+            if asset.exists():
+                resources[filename] = {
+                    **prior,
+                    "sha256": hashlib.sha256(asset.read_bytes()).hexdigest(),
+                }
 
     class Images(HTMLParser):
         def __init__(self):

@@ -7,7 +7,15 @@ from types import SimpleNamespace
 
 import pytest
 from aiogram import Bot
-from aiogram.methods import AnswerCallbackQuery, GetMe, SendMessage, SendPhoto
+from aiogram.methods import (
+    AnswerCallbackQuery,
+    DeleteMessage,
+    EditMessageMedia,
+    EditMessageText,
+    GetMe,
+    SendMessage,
+    SendPhoto,
+)
 from aiogram.types import BufferedInputFile, Update, User
 
 from cu_clubs import legacy, telegram
@@ -53,6 +61,9 @@ class MemorySession:
 
     def begin(self):
         return MemoryTransaction(self.db)
+
+    async def get(self, model, key, **kwargs):
+        return None
 
 
 class MemoryTransaction:
@@ -183,6 +194,7 @@ class FakeBot(Bot):
         self.db = db
         self.sent = []
         self.answers = []
+        self.deleted = []
 
     async def __call__(self, method, request_timeout=None):
         assert not self.db.active, "Telegram requests must happen after the DB transaction"
@@ -191,10 +203,18 @@ class FakeBot(Bot):
         if isinstance(method, AnswerCallbackQuery):
             self.answers.append(method.callback_query_id)
             return True
-        assert isinstance(method, SendMessage | SendPhoto), type(method)
+        if isinstance(method, DeleteMessage):
+            self.deleted.append(method.message_id)
+            return True
+        assert isinstance(method, SendMessage | SendPhoto | EditMessageMedia | EditMessageText), (
+            type(method)
+        )
         assert self.db.commits > 0
         self.sent.append(method)
-        return SimpleNamespace(message_id=len(self.sent))
+        return SimpleNamespace(
+            message_id=getattr(method, "message_id", None) or len(self.sent),
+            photo=[SimpleNamespace(file_id=f"OFFLINE_PHOTO_{self.id}")],
+        )
 
     @property
     def last(self):
@@ -203,6 +223,8 @@ class FakeBot(Bot):
     @property
     def last_text(self):
         method = self.last
+        if isinstance(method, EditMessageMedia):
+            return method.media.caption
         return method.caption if isinstance(method, SendPhoto) else method.text
 
     def action(self, prefix):
@@ -255,6 +277,32 @@ class Interaction:
 def interaction(monkeypatch):
     monkeypatch.setattr(telegram, "ClubService", MemoryService)
     monkeypatch.setattr(telegram, "_conversation", memory_conversation)
+
+    # These focused handler tests use an in-memory domain. The real durable renderer
+    # and its concurrency/restart behavior are exercised in test_screens and below.
+    class HandlerRenderer:
+        def __init__(self, sessions, bot, file_ids):
+            self.bot, self.file_ids = bot, file_ids
+
+        async def handle_page(self, callback):
+            return False
+
+        async def show(self, user_id, text, markup, photo, *, banner_role, trigger):
+            await telegram._send_screen(
+                self.bot,
+                user_id,
+                text,
+                markup,
+                photo,
+                banner_role=banner_role,
+                file_ids=self.file_ids,
+            )
+
+    async def separate_event_flow(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(telegram, "ScreenManager", HandlerRenderer)
+    monkeypatch.setattr(telegram, "handle_events", separate_event_flow)
     return Interaction(MemoryDB())
 
 
@@ -419,9 +467,9 @@ def test_main_menu_uses_exact_original_labels_and_permission_gates(interaction):
             }
             assert buttons == {
                 "clubs": "Клубы ЦУ",
-                "future:events": "Мероприятия",
+                "events": "Мероприятия",
                 "profile": "Личный кабинет",
-                "future:mine": "Мои мероприятия",
+                "my_events": "Мои мероприятия",
                 "faq": "FAQ",
                 **privileged,
             }

@@ -28,8 +28,8 @@
       "sha256": "b5d201d4523b4005acf333728d32306b9c75bffc3e43325a04716128e3aa559f"
     },
     "menu.png": {
-      "source": "user_original",
-      "sha256": "10e770070f642768f1aec15fb9a87369c2a00adf34c52a5f998450784d1650f6"
+      "source": "user_replacement",
+      "sha256": "e51f5a259e71022a15405750eddd250887f443297c3f100cb03a7c396adef1c5"
     },
     "personal-account.png": {
       "source": "user_original",
@@ -46,6 +46,15 @@
     "events.png": {
       "source": "user_original",
       "sha256": "8e7379b09dd27cb277ea17e98cd910a4abdf6cdb04f51d3f3c0c8ff47b7d2b15"
+    },
+    "menu-previous.png": {
+      "source": "previous_user_original",
+      "sha256": "10e770070f642768f1aec15fb9a87369c2a00adf34c52a5f998450784d1650f6"
+    },
+    "menu-telegram.png": {
+      "derived_from": "menu.png",
+      "purpose": "Telegram photo dimensions",
+      "sha256": "dbd456437c9edf77f684cd81b81a64fe209e5721be83e02359d5b2dff12a99b5"
     },
     "mail-image-1.png": {
       "source_url": "https://eimage.sendsay.ru/image/unicentral/zip/8862471728048403/logo.png",
@@ -64,8 +73,13 @@
       "source_config_key": "bot.banner.menu",
       "status": "available",
       "file": "menu.png",
-      "origin": "user_original",
-      "sha256": "10e770070f642768f1aec15fb9a87369c2a00adf34c52a5f998450784d1650f6"
+      "origin": "user_replacement",
+      "sha256": "e51f5a259e71022a15405750eddd250887f443297c3f100cb03a7c396adef1c5",
+      "upload_file": "menu-telegram.png",
+      "dimensions": [
+        5120,
+        5120
+      ]
     },
     "personal-account": {
       "source_config_key": "bot.banner.personal-account",

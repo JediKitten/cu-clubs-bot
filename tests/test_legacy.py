@@ -26,7 +26,7 @@ BANNER_HASHES = {
     "auth": "b5d201d4523b4005acf333728d32306b9c75bffc3e43325a04716128e3aa559f",
     "events": "8e7379b09dd27cb277ea17e98cd910a4abdf6cdb04f51d3f3c0c8ff47b7d2b15",
     "personal-account": "a872512e233d5f1843f0844f3c0f29998e1d1e397726f6d4c47ee2c2308b10c8",
-    "menu": "10e770070f642768f1aec15fb9a87369c2a00adf34c52a5f998450784d1650f6",
+    "menu": "e51f5a259e71022a15405750eddd250887f443297c3f100cb03a7c396adef1c5",
     "club-owner": "4acc4d1c6a266e3966a858074375cb64bd859790d7fc4f662a65f4b345e167c1",
     "clubs": "e0aa20eb3f1028fdecccab8eaf56927e704eaadc2c655d3d8d4d443403cd822d",
 }
@@ -53,19 +53,22 @@ def test_six_original_banners_are_packaged_at_original_size(role, expected):
     packaged_banners = {
         name
         for name, entry in manifest["resources"].items()
-        if entry.get("source") == "user_original"
+        if entry.get("source") in {"user_original", "user_replacement"}
     }
     assert packaged_banners == {f"{name}.png" for name in BANNER_HASHES}
     asset = legacy.banner(role)
     assert isinstance(asset, BufferedInputFile)
     assert asset.filename == f"{role}.png"
-    assert hashlib.sha256(asset.data).hexdigest() == expected
-    assert asset.data == resources().joinpath(asset.filename).read_bytes()
+    original = resources().joinpath(asset.filename).read_bytes()
+    assert hashlib.sha256(original).hexdigest() == expected
+    upload_file = manifest["banners"][role].get("upload_file", asset.filename)
+    assert asset.data == resources().joinpath(upload_file).read_bytes()
     assert manifest["resources"][asset.filename]["sha256"] == expected
-    assert manifest["resources"][asset.filename]["source"] == "user_original"
+    origin = "user_replacement" if role == "menu" else "user_original"
+    assert manifest["resources"][asset.filename]["source"] == origin
     metadata = manifest["banners"][role]
     if "dimensions" in metadata:
-        assert metadata["dimensions"] == [2560, 2560]
+        assert metadata["dimensions"] == ([5120, 5120] if role == "menu" else [2560, 2560])
     assert {
         key: metadata[key]
         for key in (
@@ -79,7 +82,7 @@ def test_six_original_banners_are_packaged_at_original_size(role, expected):
         "source_config_key": f"bot.banner.{role}",
         "status": "available",
         "file": asset.filename,
-        "origin": "user_original",
+        "origin": origin,
         "sha256": expected,
     }
     with Image.open(BytesIO(asset.data)) as image:
@@ -140,7 +143,7 @@ def test_club_card_preserves_original_block_and_appends_new_fields():
     assert telegram.card_text(club) == (
         original_block + "\n\n<b>Уровень:</b> Seed\n\n<b>Команда</b>\n"
         "• &lt;Кир&gt; — Кино &amp; программа"
-        "\n\nБлижайшие встречи появятся после подключения событий."
+        "\n\nБлижайшие встречи — в разделе «Мероприятия»."
     )
 
 

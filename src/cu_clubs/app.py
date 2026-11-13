@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from cu_clubs import __version__
 from cu_clubs.config import Settings
+from cu_clubs.inbox_crypto import seal_update
 from cu_clubs.models import TelegramUpdate
 
 logger = logging.getLogger(__name__)
@@ -41,8 +42,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         title="CU Clubs",
         version=__version__,
         description=(
-            "Initial club profiles and Telegram adapter. "
-            "Event registration and club integration API are under development."
+            "Club profiles, events and registrations through Telegram. "
+            "The public club integration API is under development."
         ),
         lifespan=lifespan,
     )
@@ -97,7 +98,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         async with app.state.sessions() as session, session.begin():
             await session.execute(
                 insert(TelegramUpdate)
-                .values(update_id=update_id, payload=payload)
+                .values(
+                    update_id=update_id, payload=seal_update(payload, config.verification_secret)
+                )
                 .on_conflict_do_nothing(index_elements=[TelegramUpdate.update_id])
             )
         return {"ok": True}

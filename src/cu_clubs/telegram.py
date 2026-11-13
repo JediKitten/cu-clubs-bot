@@ -8,11 +8,15 @@ from uuid import uuid4
 
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types import Update as AiogramUpdate
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 
 from cu_clubs import legacy
-from cu_clubs.models import Conversation
+from cu_clubs.event_ui import handle_events
+from cu_clubs.identity_ui import handle_identity
+from cu_clubs.models import Conversation, TelegramUpdate
+from cu_clubs.screens import ScreenManager
 from cu_clubs.services import ClubNotFound, ClubService, PermissionDenied, ValidationError
 
 UNAVAILABLE = "Этот раздел ещё в разработке. Сейчас доступны клубы и управление профилем клуба."
@@ -50,7 +54,7 @@ def card_text(club: dict[str, Any]) -> str:
         + "".join(
             f"\n{escape(link['label'])}: {escape(link['url'])}" for link in club.get("links", [])
         )
-        + "\n\nБлижайшие встречи появятся после подключения событий."
+        + "\n\nБлижайшие встречи — в разделе «Мероприятия»."
     )
 
 
@@ -231,9 +235,9 @@ async def _leader_access(service: ClubService, user_id: int, public_id: str) -> 
 
 async def _menu(service: ClubService, user_id: int) -> tuple[str, InlineKeyboardMarkup]:
     rows = [
-        [(legacy.text("cu_clubs"), "clubs"), (legacy.text("events"), "future:events")],
+        [(legacy.text("cu_clubs"), "clubs"), (legacy.text("events"), "events")],
         [(legacy.text("personal_account"), "profile")],
-        [(legacy.text("my_events"), "future:mine")],
+        [(legacy.text("my_events"), "my_events")],
         [("FAQ", "faq")],
     ]
     if await service.managed_clubs(user_id):
@@ -347,19 +351,27 @@ def build_dispatcher(sessionmaker: Any, settings: Any) -> Dispatcher:
     Each handler owns its database transaction and sends Telegram replies after commit.
     Only private chats are handled. This adapter never starts polling or reads secrets.
     """
-    del settings  # Configuration and credentials belong to the application lifespan.
     dispatcher = Dispatcher(disable_fsm=True)
     banner_file_ids: dict[tuple[int, str], str] = {}
     router = Router(name="private_clubs")
     router.message.filter(F.chat.type == "private")
     router.callback_query.filter(F.message.chat.type == "private")
 
-    async def dispatch(event: Message | CallbackQuery, bot: Bot) -> None:
+    async def dispatch(
+        event: Message | CallbackQuery,
+        bot: Bot,
+        event_update: AiogramUpdate,
+        inbox_attempt: int | None = None,
+    ) -> None:
         user = event.from_user
         if user is None:
             return
         callback = event if isinstance(event, CallbackQuery) else None
         message = event if isinstance(event, Message) else None
+        manager = ScreenManager(sessionmaker, bot, file_ids=banner_file_ids)
+        if callback and await manager.handle_page(callback):
+            await callback.answer()
+            return
         command = (message.text or "").split(maxsplit=1) if message else []
         data = callback.data or "" if callback else ""
         photo = None
@@ -369,10 +381,43 @@ def build_dispatcher(sessionmaker: Any, settings: Any) -> Dispatcher:
         markup = None
         try:
             async with sessionmaker() as session, session.begin():
+                stored_update = await session.get(
+                    TelegramUpdate, event_update.update_id, with_for_update=True
+                )
+                if stored_update is not None and (
+                    stored_update.status == "done"
+                    or (inbox_attempt is not None and stored_update.attempts != inbox_attempt)
+                ):
+                    return
                 service = ClubService(session)
                 person = await service.get_or_create_person(user.id, user.full_name, user.username)
                 state = await _conversation(session, user.id)
-                if message and command and command[0].split("@", 1)[0] == "/start":
+                start_event = (
+                    message
+                    and len(command) == 2
+                    and command[0].split("@", 1)[0] == "/start"
+                    and command[1].startswith("e_")
+                )
+                flow = None
+                if start_event:
+                    _reset(state)
+                    flow = await handle_events(
+                        session, user.id, state, None, f"event:{command[1][2:]}:link", settings
+                    )
+                elif not command or not command[0].startswith("/"):
+                    flow = await handle_identity(
+                        session, user.id, state, message, data, settings, person
+                    )
+                    if flow is None:
+                        flow = await handle_events(session, user.id, state, message, data, settings)
+                if flow is not None:
+                    text, markup, photo, banner_role = (
+                        flow.text,
+                        flow.markup,
+                        flow.photo,
+                        flow.banner_role,
+                    )
+                elif message and command and command[0].split("@", 1)[0] == "/start":
                     _reset(state)
                     parts = message.text.split(maxsplit=1)
                     if len(parts) == 2 and parts[1].startswith("c_"):
@@ -440,6 +485,9 @@ def build_dispatcher(sessionmaker: Any, settings: Any) -> Dispatcher:
                         "\n\nВыбери клуб для изменения профиля и организаторов."
                     )
                     _, markup = await _clubs(service, manage=True, user_id=user.id)
+                    markup.inline_keyboard.insert(
+                        0, [InlineKeyboardButton(text="Создать клуб", callback_data="adminnew")]
+                    )
                 elif data == "profile":
                     text = legacy.personal_account_text(person["full_name"]) + (
                         "\n\nПочта не подтверждена."
@@ -450,7 +498,8 @@ def build_dispatcher(sessionmaker: Any, settings: Any) -> Dispatcher:
                 elif data in {"faq", "faq:levels"}:
                     text = (
                         "<b>Как пользоваться ботом</b>\nОткрой «Клубы ЦУ», чтобы найти карточку "
-                        "и подписаться на анонсы. События и запись пока в разработке.\n\n"
+                        "и подписаться на анонсы. В разделе «Мероприятия» можно выбрать встречу "
+                        "и записаться после подтверждения студенческой почты.\n\n"
                         "<b>Уровни клубов</b>\nConcept → Pre-Seed → Seed → Pre-IPO → IPO. "
                         "Уровень назначает администрация. Гостевой вход планируется от Seed; "
                         "он пока не подключён."
@@ -491,6 +540,14 @@ def build_dispatcher(sessionmaker: Any, settings: Any) -> Dispatcher:
                         rows.append([(legacy.text("profile"), f"editmenu:{public_id}")])
                     if permissions["is_admin"] or permissions["is_leader"]:
                         rows.append([("Организаторы", f"organizers:{public_id}")])
+                    if permissions["manage_events"]:
+                        rows.append([("Создать встречу", f"eventnew:{public_id}")])
+                        rows.append([("Черновики", f"eventdrafts:{public_id}")])
+                    if permissions["manage_events"] or permissions["record_attendance"]:
+                        rows.append([("Встречи клуба", f"eventlist:{public_id}")])
+                    if permissions["is_admin"]:
+                        rows.append([("Изменить уровень", f"adminlevel:{public_id}")])
+                        rows.append([("Назначить лидера", f"adminleader:{public_id}")])
                     rows.append([("В меню", "menu")])
                     markup = keyboard(*rows)
                 elif data.startswith("editmenu:"):
@@ -596,6 +653,13 @@ def build_dispatcher(sessionmaker: Any, settings: Any) -> Dispatcher:
                 else:
                     text = "Это действие уже завершено или устарело. Открой актуальный раздел."
                     markup = keyboard([("В меню", "menu")])
+                # Consume durable input in the SAME transaction as its business/state
+                # changes. A later Telegram failure must not apply a wizard answer
+                # again to its next field. The next user action can redraw the screen.
+                if stored_update is not None and stored_update.status == "processing":
+                    stored_update.status = "done"
+                    stored_update.lease_until = None
+                    stored_update.last_error = None
         except (PermissionDenied, ClubNotFound, ValidationError) as exc:
             photo = None
             text, markup = escape(str(exc)), keyboard([("В меню", "menu")])
@@ -622,14 +686,13 @@ def build_dispatcher(sessionmaker: Any, settings: Any) -> Dispatcher:
         original_banner = photo is None and banner_role is not None
         if original_banner:
             photo = legacy.banner(banner_role)
-        await _send_screen(
-            bot,
+        await manager.show(
             user.id,
             text,
             markup,
             photo,
             banner_role=banner_role if original_banner else None,
-            file_ids=banner_file_ids,
+            trigger=event,
         )
         if callback:
             await callback.answer()
