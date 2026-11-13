@@ -650,6 +650,7 @@ class EventService:
                     dto = await self._dto(event, actor_id)
                     dto["invitation_id"] = str(invitation.id)
                     dto["partner_club"] = partner.public_id
+                    dto["can_review"] = True
                     result.append(dto)
         return result
 

@@ -80,7 +80,9 @@ def event_text(event: dict) -> str:
         "<blockquote>{{html .AfterRegistrationText}}</blockquote>{{end}}{{end}}"
     )
     after = ""
-    if (event.get("registered") or event.get("can_manage")) and event.get("post_registration_text"):
+    if (
+        event.get("registered") or event.get("can_manage") or event.get("can_review")
+    ) and event.get("post_registration_text"):
         after = (
             "<b>Текст после регистрации:</b>\n<blockquote>"
             + escape(event["post_registration_text"])
@@ -124,7 +126,7 @@ def event_text(event: dict) -> str:
         text += f"\n<b>{status}</b>"
     if event.get("registered"):
         text += "\n" + legacy.text("registered")
-    if event.get("can_manage"):
+    if event.get("can_manage") or event.get("can_review"):
         text += (
             f"\n\nТолк: {'да' if event['needs_talk'] else 'нет'}"
             f"\nМикрофоны: {'да' if event['needs_microphones'] else 'нет'}"

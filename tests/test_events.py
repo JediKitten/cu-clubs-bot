@@ -295,6 +295,7 @@ def test_collaboration_requires_partner_leader_and_current_version(sessions):
                 LEADER, draft["public_id"], "p" * 32, draft["version"]
             )
             assert not (await service.pending_invitations(PARTNER))[0]["can_manage"]
+            assert (await service.pending_invitations(PARTNER))[0]["can_review"]
             first_id = pending["invitation_id"]
             changed = await service.update_draft(
                 LEADER, draft["public_id"], {"room": "310"}, pending["version"]

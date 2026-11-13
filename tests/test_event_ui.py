@@ -62,3 +62,14 @@ def test_cancelled_closed_card_marks_status_without_exposing_private_text():
     rendered = event_text(event)
     assert rendered.endswith("Закрытая · по приглашению\n<b>Встреча отменена</b>")
     assert "Секрет" not in rendered
+
+
+def test_invited_partner_sees_full_review_without_receiving_management_rights():
+    event = sample_event()
+    event.update(status="pending_partner", can_review=True)
+    text = event_text(event)
+    assert "Секрет {{.Name}} &lt;инструкция&gt;" in text
+    assert "Микрофоны: да" in text and "Толк: нет" in text
+    assert not event["can_manage"] and not event["registered"]
+    event.pop("can_review")
+    assert "Секрет" not in event_text(event)
