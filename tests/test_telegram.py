@@ -349,8 +349,12 @@ def test_navigation_subscription_share_and_honest_profile(interaction):
         assert "Киноклуб" in i.bot.last_text
         await i.send(callback=i.bot.action("subscribe:"), user_id=104)
         assert 104 in i.db.subscriptions
+        assert i.bot.last_text.startswith("Клуб: <b>Киноклуб</b>\nПодписка включена\n")
+        await i.send(callback="club:cinema", user_id=104)
+        assert i.bot.last_text.count("Подписка включена") == 1
         await i.send(callback=i.bot.action("subscribe:"), user_id=104)
         assert 104 not in i.db.subscriptions
+        assert "Подписка включена" not in i.bot.last_text
         await i.send(callback="share:cinema", user_id=104)
         assert "https://t.me/offline_test_bot?start=c_cinema" in i.bot.last_text
         await i.send(callback="profile", user_id=104)

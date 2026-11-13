@@ -16,6 +16,7 @@ from aiogram.exceptions import (
     TelegramForbiddenError,
     TelegramNetworkError,
     TelegramRetryAfter,
+    TelegramServerError,
 )
 from aiogram.types import FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup, Update
 from sqlalchemy import and_, func, or_, select, update
@@ -55,7 +56,7 @@ async def poll_updates(bot: Bot, sessions, settings: Settings | None = None) -> 
         except TelegramRetryAfter as exc:
             await asyncio.sleep(exc.retry_after + 1)
             continue
-        except TelegramNetworkError:
+        except (TelegramNetworkError, TelegramServerError):
             logger.warning("Telegram polling connection interrupted")
             await asyncio.sleep(3)
             continue
@@ -69,7 +70,7 @@ async def poll_updates(bot: Bot, sessions, settings: Settings | None = None) -> 
                         {
                             "update_id": item.update_id,
                             "payload": seal_update(
-                                item.model_dump(mode="json", exclude_none=True),
+                                item.model_dump(mode="json", exclude_none=True, exclude_unset=True),
                                 settings.verification_secret if settings else None,
                             ),
                         }
@@ -155,7 +156,7 @@ async def claim_outbox(sessions) -> dict | None:
         }
 
 
-async def deliver(bot: Bot, item: dict, settings: Settings):
+async def deliver(bot: Bot, item: dict, settings: Settings, *, sessions=None):
     if item["kind"] == "club.created":
         club = item["payload"]
         keyboard = InlineKeyboardMarkup(
@@ -163,7 +164,7 @@ async def deliver(bot: Bot, item: dict, settings: Settings):
                 [
                     InlineKeyboardButton(
                         text="Открыть клуб",
-                        url=f"https://t.me/{settings.telegram_bot_username}?start=c_{club['public_id']}",
+                        callback_data=f"club:{club['public_id']}",
                     )
                 ],
                 [
@@ -173,16 +174,19 @@ async def deliver(bot: Bot, item: dict, settings: Settings):
                 ],
             ]
         )
-        return await bot.send_message(
+        if sessions is None:
+            raise ValueError("Club notification requires the durable screen manager")
+        message_id = await ScreenManager(sessions, bot).show(
             item["recipient"],
             legacy.club_created_text(club["name"])
             + f"\n\nУровень — {club.get('level', 'Seed')}. Ты назначен лидером.\n\n"
             "Описание, обложку, ссылки и публичную команду можно заполнить в разделе "
             "«Мои клубы → Профиль». Публичная команда и права организаторов "
             "настраиваются отдельно.",
-            parse_mode="HTML",
-            reply_markup=keyboard,
+            markup=keyboard,
+            force_new=True,
         )
+        return SimpleNamespace(message_id=message_id)
     if item["kind"] == "backup.ready":
         # Only the configured owner receives database files, even if an outbox row is altered.
         if item["recipient"] != settings.backup_recipient_telegram_id:
@@ -308,7 +312,7 @@ async def process_outbox(sessions, bot: Bot, item: dict, settings: Settings) -> 
         elif item["kind"].startswith(("event.", "club.level.", "club.leader.")):
             result = await deliver_domain_notice(sessions, bot, item, settings)
         else:
-            result = await deliver(bot, item, settings)
+            result = await deliver(bot, item, settings, sessions=sessions)
         values.update(
             status="sent",
             delivered_at=utcnow(),
@@ -489,14 +493,10 @@ async def run_worker(settings: Settings) -> None:
             if not item and not outgoing:
                 await asyncio.sleep(0.5)
     finally:
-        if calendar_task is not None:
-            calendar_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await calendar_task
-        if polling is not None:
-            polling.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await polling
+        tasks = [task for task in (calendar_task, polling) if task is not None]
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
         await bot.session.close()
         await engine.dispose()
 

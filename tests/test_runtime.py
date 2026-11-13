@@ -97,6 +97,7 @@ class FakeBot(Bot):
         super().__init__("123456:OFFLINE_RUNTIME_TEST_TOKEN")
         self.sent = []
         self.answered = []
+        self.deleted = []
         self.error = error
 
     async def __call__(self, method, request_timeout=None):
@@ -104,6 +105,7 @@ class FakeBot(Bot):
             self.answered.append(method)
             return True
         if isinstance(method, DeleteMessage):
+            self.deleted.append(method.message_id)
             return True
         assert isinstance(
             method, SendMessage | SendDocument | SendPhoto | EditMessageText | EditMessageMedia
@@ -407,9 +409,7 @@ def test_bootstrap_notification_is_delivered_once_and_card_button_works(runtime_
                 "настраиваются отдельно."
             )
             buttons = [button for row in message.reply_markup.inline_keyboard for button in row]
-            assert any(
-                button.url == "https://t.me/offline_test_bot?start=c_cinema" for button in buttons
-            )
+            assert any(button.callback_data == "club:cinema" for button in buttons)
             assert any(button.callback_data == "manageclub:cinema" for button in buttons)
             async with sessions.begin() as session:
                 row = await session.get(Outbox, item["id"])
@@ -445,6 +445,7 @@ def test_bootstrap_notification_is_delivered_once_and_card_button_works(runtime_
                 for button in row
             )
             assert bot.answered
+            assert 901 in bot.deleted
         finally:
             await bot.session.close()
 

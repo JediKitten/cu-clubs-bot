@@ -17,14 +17,14 @@ from aiogram.types import (
     InputMediaPhoto,
     Message,
 )
-from sqlalchemy import BigInteger, CheckConstraint, DateTime, Integer, String, Text, func
+from sqlalchemy import BigInteger, CheckConstraint, DateTime, Integer, String, Text, func, select
 from sqlalchemy import text as sql_text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import Mapped, mapped_column
 
 from cu_clubs import legacy
-from cu_clubs.models import Base
+from cu_clubs.models import Base, Outbox
 
 PAGE_PREFIX = "screen:page:"
 
@@ -158,16 +158,20 @@ class ScreenManager:
             {"key": int.from_bytes(digest, "big", signed=True)},
         )
 
-    async def _delete(self, chat_id: int, message_id: int) -> None:
+    async def _delete(self, chat_id: int, message_id: int) -> bool:
         try:
             await self.bot.delete_message(chat_id=chat_id, message_id=message_id)
+            return True
         except TelegramAPIError:
             # Rendering has succeeded. Cleanup is best effort and must not roll
             # back the newly saved message pointer or cause another render.
-            pass
+            return False
 
-    async def _cleanup(self, chat_id: int, current: int, old: int | None, trigger: Any) -> None:
+    async def _cleanup(
+        self, chat_id: int, current: int, old: int | None, trigger: Any, extra_ids=()
+    ) -> set[int]:
         remove = {old} if old is not None and old != current else set()
+        remove.update(message_id for message_id in extra_ids if message_id != current)
         callback_message = _own_callback_message(self.bot, chat_id, trigger)
         if callback_message is not None and callback_message.message_id != current:
             remove.add(callback_message.message_id)
@@ -176,8 +180,11 @@ class ScreenManager:
             if trigger.chat.id == chat_id and sender and sender.id != self.bot.id:
                 if trigger.message_id != current:
                     remove.add(trigger.message_id)
+        deleted = set()
         for message_id in remove:
-            await self._delete(chat_id, message_id)
+            if await self._delete(chat_id, message_id):
+                deleted.add(message_id)
+        return deleted
 
     async def _render(self, screen: UIScreen, photo: Any, old_kind: str | None) -> Any:
         content, markup = _page_text(screen), _markup(screen)
@@ -306,7 +313,30 @@ class ScreenManager:
                     role: {"sha256": fingerprint, "file_id": screen.photo_file_id},
                 }
             await session.flush()
-            await self._cleanup(chat_id, screen.message_id, previous_id, trigger)
+            # Also retire pre-single-screen club notifications: their URL buttons
+            # open /start without providing the original message as a callback.
+            notifications = list(
+                await session.scalars(
+                    select(Outbox).where(
+                        Outbox.kind == "club.created",
+                        Outbox.recipient_telegram_id == chat_id,
+                        Outbox.status == "sent",
+                        Outbox.telegram_message_id.is_not(None),
+                        Outbox.telegram_message_id != screen.message_id,
+                        Outbox.payload["ui_retired"].as_boolean().is_not(True),
+                    )
+                )
+            )
+            deleted = await self._cleanup(
+                chat_id,
+                screen.message_id,
+                previous_id,
+                trigger,
+                [item.telegram_message_id for item in notifications],
+            )
+            for item in notifications:
+                if item.telegram_message_id in deleted:
+                    item.payload = {**item.payload, "ui_retired": True}
             return screen.message_id
 
     async def handle_page(self, callback: CallbackQuery) -> bool:

@@ -22,6 +22,7 @@ from cu_clubs.screens import ScreenManager
 from cu_clubs.services import ClubNotFound, ClubService, PermissionDenied, ValidationError
 from cu_clubs.telegram_files import attendance_upload
 from cu_clubs.template_ui import handle_templates
+from cu_clubs.ui_common import keyboard
 
 UNAVAILABLE = "Этот раздел ещё в разработке. Сейчас доступны клубы и управление профилем клуба."
 FIELDS = {
@@ -33,16 +34,7 @@ FIELDS = {
 }
 
 
-def keyboard(*rows: list[tuple[str, str]]) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text=label, callback_data=data) for label, data in row]
-            for row in rows
-        ]
-    )
-
-
-def card_text(club: dict[str, Any]) -> str:
+def card_text(club: dict[str, Any], *, subscribed: bool = False) -> str:
     team = club.get("public_team") or []
     people = (
         "\n".join(
@@ -52,8 +44,12 @@ def card_text(club: dict[str, Any]) -> str:
         )
         or "Команда пока не указана"
     )
+    base = legacy.club_base_text(club)
+    if subscribed:
+        heading = f"Клуб: <b>{escape(club['name'])}</b>"
+        base = base.replace(heading, heading + "\nПодписка включена", 1)
     return (
-        legacy.club_base_text(club)
+        base
         + f"\n\n<b>Уровень:</b> {escape(club['level'])}\n\n<b>Команда</b>\n{people}"
         + "".join(
             f"\n{escape(link['label'])}: {escape(link['url'])}" for link in club.get("links", [])
@@ -268,7 +264,7 @@ async def _club_card(service: ClubService, user_id: int, public_id: str) -> tupl
         raise ClubNotFound("Клуб не найден.")
     subscribed = await service.get_subscription(user_id, public_id)
     return (
-        card_text(club),
+        card_text(club, subscribed=subscribed),
         keyboard(
             [
                 (
@@ -552,9 +548,7 @@ def build_dispatcher(sessionmaker: Any, settings: Any) -> Dispatcher:
                     if enabled not in {"0", "1"}:
                         raise ValidationError("Некорректное действие подписки.")
                     await service.set_subscription(user.id, public_id, enabled == "1")
-                    card, markup, photo = await _club_card(service, user.id, public_id)
-                    text = "Подписка включена." if enabled == "1" else "Подписка отключена."
-                    text += "\n\n" + card
+                    text, markup, photo = await _club_card(service, user.id, public_id)
                 elif data.startswith("share:"):
                     public_id = data.split(":", 1)[1]
                     if await service.get_club(public_id) is None:
