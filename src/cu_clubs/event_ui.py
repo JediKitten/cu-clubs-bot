@@ -153,6 +153,11 @@ async def _card(service, user_id, public_id, *, via_link=False) -> Screen:
         else:
             rows.append([(legacy.text("register"), f"evreg:{public_id}{suffix}")])
     if event["can_manage"]:
+        if event["status"] == "draft" and (
+            event.get("template_start_time") or not event["starts_at"]
+        ):
+            label = "Выбрать дату" if event.get("template_start_time") else "Указать дату и время"
+            rows.append([(label, f"evf:{public_id}:start")])
         if event["status"] in {"draft", "pending_partner", "published"}:
             rows.append([("Изменить поле", f"evedit:{public_id}")])
         if event["status"] == "draft":
@@ -218,6 +223,18 @@ def _prompt(state, event) -> Screen:
         rows.append([("Пропустить", f"evchoice:{token}:skip")])
     if field == "registration_deadline":
         rows.append([("До начала встречи", f"evchoice:{token}:default")])
+    if field == "starts_at" and event.get("template_start_time") and event["status"] == "draft":
+        clock = (
+            datetime.fromisoformat(event["starts_at"]).astimezone(MOSCOW).strftime("%H:%M")
+            if event.get("starts_at")
+            else event["template_start_time"]
+        )
+        hints[field] += (
+            f"\n\nНачало в {clock} по Москве. "
+            "Пришли только дату DD.MM.YYYY или укажи новые дату и время полностью."
+        )
+        if event.get("template_duration_minutes"):
+            hints[field] += f"\nДлительность: {event['template_duration_minutes']} мин."
     rows.append(
         [
             (
@@ -234,6 +251,18 @@ def _parse(field, raw, event):
         if field == "registration_deadline" and raw == "default":
             return event["starts_at"]
         try:
+            if (
+                field == "starts_at"
+                and event.get("template_start_time")
+                and event["status"] == "draft"
+                and len(raw) == 10
+            ):
+                clock = (
+                    datetime.fromisoformat(event["starts_at"]).astimezone(MOSCOW).strftime("%H:%M")
+                    if event.get("starts_at")
+                    else event["template_start_time"]
+                )
+                return datetime.strptime(f"{raw} {clock}", "%d.%m.%Y %H:%M").replace(tzinfo=MOSCOW)
             return datetime.strptime(raw, "%d.%m.%Y %H:%M").replace(tzinfo=MOSCOW)
         except ValueError:
             raise ValidationError(
@@ -260,7 +289,23 @@ async def _edit_value(service, user_id, state, raw):
     field = payload["field"]
     value = _parse(field, raw, event)
     method = service.update_event if event["status"] == "published" else service.update_draft
-    event = await method(user_id, event["public_id"], {field: value}, payload["version"])
+    changes = {field: value}
+    if (
+        field == "starts_at"
+        and len(raw) == 10
+        and event.get("template_start_time")
+        and event.get("starts_at")
+        and event.get("ends_at")
+        and event["status"] == "draft"
+    ):
+        duration = datetime.fromisoformat(event["ends_at"]) - datetime.fromisoformat(
+            event["starts_at"]
+        )
+        try:
+            changes["ends_at"] = value + duration
+        except OverflowError:
+            raise ValidationError("Дата окончания выходит за допустимый диапазон.") from None
+    event = await method(user_id, event["public_id"], changes, payload["version"])
     if payload.get("wizard") and FIELDS.index(field) < len(FIELDS) - 1:
         state.payload = {
             **payload,
@@ -354,6 +399,11 @@ async def handle_events(
             if data.startswith("evfromtemplate:")
             else service.create_draft(user_id, key)
         )
+        if data.startswith("evfromtemplate:"):
+            _reset(state)
+            screen = await _card(service, user_id, event["public_id"])
+            screen.text = "Черновик создан из шаблона.\n\n" + screen.text
+            return screen
         state.state, state.payload = (
             "event_edit",
             {

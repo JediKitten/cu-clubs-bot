@@ -35,6 +35,15 @@ class Event(Base):
         CheckConstraint("version > 0", name="ck_event_version"),
         CheckConstraint("capacity IS NULL OR capacity > 0", name="ck_event_capacity"),
         CheckConstraint(
+            "template_duration_minutes IS NULL OR template_duration_minutes > 0",
+            name="ck_event_template_duration",
+        ),
+        CheckConstraint(
+            "template_start_time IS NULL OR template_start_time ~ "
+            "'^([01][0-9]|2[0-3]):[0-5][0-9]$'",
+            name="ck_event_template_start_time",
+        ),
+        CheckConstraint(
             "expected_attendance IS NULL OR expected_attendance > 0", name="ck_event_expected"
         ),
         CheckConstraint(
@@ -60,6 +69,8 @@ class Event(Base):
     visibility: Mapped[str] = mapped_column(String(10), default="open", server_default="open")
     starts_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    template_duration_minutes: Mapped[int | None] = mapped_column(Integer)
+    template_start_time: Mapped[str | None] = mapped_column(String(5))
     registration_deadline: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     capacity: Mapped[int | None] = mapped_column(Integer)
     expected_attendance: Mapped[int | None] = mapped_column(Integer)
@@ -133,7 +144,16 @@ class RegistrationHistory(Base):
 
 class EventTemplate(Base):
     __tablename__ = "event_templates"
-    __table_args__ = (UniqueConstraint("club_id", "name", name="uq_event_template_name"),)
+    __table_args__ = (
+        Index(
+            "uq_event_template_active_name",
+            "club_id",
+            "name",
+            unique=True,
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+        CheckConstraint("version > 0", name="ck_event_template_version"),
+    )
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     public_id: Mapped[str] = mapped_column(String(32), unique=True, default=lambda: uuid4().hex)
     club_id: Mapped[UUID] = mapped_column(ForeignKey("clubs.id"))

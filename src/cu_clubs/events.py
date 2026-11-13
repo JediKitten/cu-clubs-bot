@@ -1,10 +1,12 @@
 """Shared meeting commands. Callers own transactions; delivery uses the outbox."""
 
-from datetime import UTC, datetime
+import re
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from cu_clubs.event_models import (
@@ -41,6 +43,33 @@ EDIT_FIELDS = {
 }
 DATE_FIELDS = {"starts_at", "ends_at", "registration_deadline"}
 TEMPLATE_FIELDS = EDIT_FIELDS - DATE_FIELDS - {"room"}
+
+
+def validate_template_fields(fields: dict, current_fields: dict | None = None) -> dict:
+    """Validate a portable settings patch without creating or changing a meeting."""
+    allowed = TEMPLATE_FIELDS | {"duration_minutes", "start_time"}
+    if not isinstance(fields, dict) or fields.keys() - allowed:
+        raise ValidationError("Неизвестное поле шаблона.")
+    merged = {k: v for k, v in (current_fields or {}).items() if k in allowed}
+    merged.update(fields)
+    duration = merged.pop("duration_minutes", None)
+    start_time = merged.pop("start_time", None)
+    if duration is not None and (
+        isinstance(duration, bool) or not isinstance(duration, int) or not 0 < duration < 2**31
+    ):
+        raise ValidationError("Длительность должна быть положительным целым числом минут.")
+    if start_time is not None and (
+        not isinstance(start_time, str)
+        or not re.fullmatch(r"(?:[01][0-9]|2[0-3]):[0-5][0-9]", start_time)
+    ):
+        raise ValidationError("Время начала должно быть в формате ЧЧ:ММ по Москве.")
+    candidate = validate_fields(merged)
+    result = {key: candidate[key] for key in TEMPLATE_FIELDS}
+    if duration is not None:
+        result["duration_minutes"] = duration
+    if start_time is not None:
+        result["start_time"] = start_time
+    return result
 
 
 def utcnow() -> datetime:
@@ -245,6 +274,8 @@ class EventService:
             public_id=event.public_id,
             status=event.status,
             version=event.version,
+            template_duration_minutes=event.template_duration_minutes,
+            template_start_time=event.template_start_time,
             clubs=[
                 {"public_id": c.public_id, "name": c.name, "level": c.level_name} for c in clubs
             ],
@@ -379,7 +410,21 @@ class EventService:
         self._version(event, expected_version)
         if event.status not in {"draft", "pending_partner"}:
             raise ValidationError("Эта встреча уже опубликована. Открой редактирование встречи.")
+        explicit_end = "ends_at" in fields
+        fields = dict(fields)
+        if "starts_at" in fields and "ends_at" not in fields and event.template_duration_minutes:
+            start = _date(fields["starts_at"])
+            if start is not None and event.ends_at is None:
+                try:
+                    fields["ends_at"] = start + timedelta(minutes=event.template_duration_minutes)
+                except OverflowError:
+                    raise ValidationError(
+                        "Длительность выходит за допустимый диапазон дат."
+                    ) from None
         candidate = validate_fields(fields, event, complete=event.status == "pending_partner")
+        if explicit_end:
+            # A manually chosen or cleared ending wins over the template default.
+            event.template_duration_minutes = None
         old = await self.session.scalar(
             select(EventInvitation).where(
                 EventInvitation.event_id == event.id, EventInvitation.status == "pending"
@@ -719,34 +764,152 @@ class EventService:
         await self.session.flush()
         return await self._dto(event, actor_id)
 
-    async def save_template(self, actor_id: int, event_public_id: str, name: str) -> dict:
-        event = await self._event(event_public_id)
-        await self._manage(actor_id, event)
+    @staticmethod
+    def _template_name(name: str) -> str:
         if not isinstance(name, str) or not 1 <= len(name.strip()) <= 150:
             raise ValidationError("Название шаблона должно содержать от 1 до 150 символов.")
-        # Templates remain under the initiating club, whose management is required.
-        club = await self.session.get(Club, event.initiator_club_id)
+        if any(ord(char) < 32 for char in name):
+            raise ValidationError("Название шаблона должно быть одной строкой.")
+        return name.strip()
+
+    async def _template_lock(self, club_id: UUID) -> None:
+        # Serialize same-club name checks and writes. The partial unique index is
+        # an independent database guard, including clients outside this service.
+        await self.session.execute(
+            text("SELECT pg_advisory_xact_lock(hashtextextended(:key, 0))"),
+            {"key": f"event-templates:{club_id}"},
+        )
+
+    async def _template(
+        self, actor_id: int, public_id: str, *, lock=False
+    ) -> tuple[EventTemplate, Club]:
+        template = await self.session.scalar(
+            select(EventTemplate)
+            .where(EventTemplate.public_id == public_id)
+            .execution_options(populate_existing=True)
+        )
+        if template is None or template.deleted_at is not None:
+            raise ValidationError("Шаблон не найден.")
+        club = await self.session.get(Club, template.club_id)
         await self.clubs.authorize(actor_id, club.public_id, "manage_events")
-        if await self.session.scalar(
-            select(EventTemplate.id).where(
-                EventTemplate.club_id == club.id, EventTemplate.name == name.strip()
+        if lock:
+            await self._template_lock(club.id)
+            template = await self.session.scalar(
+                select(EventTemplate)
+                .where(EventTemplate.id == template.id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
             )
-        ):
-            raise ValidationError("Шаблон с таким названием уже существует.")
-        fields = {key: getattr(event, key) for key in TEMPLATE_FIELDS}
-        if event.starts_at and event.ends_at:
-            fields["duration_minutes"] = int(
-                (event.ends_at - event.starts_at).total_seconds() // 60
-            )
-        template = EventTemplate(club_id=club.id, name=name.strip(), fields=fields)
-        self.session.add(template)
-        await self.session.flush()
+            if template.deleted_at is not None:
+                raise ValidationError("Шаблон не найден.")
+        return template, club
+
+    @staticmethod
+    def _template_version(template: EventTemplate, expected_version: int) -> None:
+        if isinstance(expected_version, bool) or expected_version != template.version:
+            raise ValidationError("Шаблон изменился. Открой актуальную версию.")
+
+    @staticmethod
+    def _template_dto(template: EventTemplate, club: Club) -> dict:
         return {
             "public_id": template.public_id,
             "name": template.name,
-            "fields": template.fields,
+            "club_public_id": club.public_id,
+            "club_name": club.name,
+            "fields": dict(template.fields),
             "version": template.version,
         }
+
+    def _template_audit(self, actor_id: int, action: str, template: EventTemplate, details=None):
+        self.session.add(
+            Audit(
+                actor_telegram_id=actor_id,
+                action=f"template.{action}",
+                entity_id=template.id,
+                details={
+                    "club_id": str(template.club_id),
+                    "version": template.version,
+                    **(details or {}),
+                },
+            )
+        )
+
+    async def _unique_template_name(self, club_id: UUID, name: str, *, except_id=None) -> None:
+        query = select(EventTemplate.id).where(
+            EventTemplate.club_id == club_id,
+            EventTemplate.name == name,
+            EventTemplate.deleted_at.is_(None),
+        )
+        if except_id is not None:
+            query = query.where(EventTemplate.id != except_id)
+        if await self.session.scalar(query):
+            raise ValidationError("Шаблон с таким названием уже существует.")
+
+    async def template_destinations(self, actor_id: int, event_public_id: str) -> list[dict]:
+        event = await self._event(event_public_id)
+        await self._manage(actor_id, event)
+        destinations = []
+        for club in await self._event_clubs(event):
+            if (await self.clubs.permissions(actor_id, club.public_id))["manage_events"]:
+                destinations.append({"public_id": club.public_id, "name": club.name})
+        return destinations
+
+    async def save_template(
+        self,
+        actor_id: int,
+        event_public_id: str,
+        name: str,
+        *,
+        expected_event_version: int | None = None,
+        target_club_public_id: str | None = None,
+    ) -> dict:
+        event = await self._event(event_public_id, lock=True)
+        await self._manage(actor_id, event)
+        if expected_event_version is not None:
+            self._version(event, expected_event_version)
+        destinations = await self.template_destinations(actor_id, event_public_id)
+        if target_club_public_id is None:
+            if len(destinations) != 1:
+                raise ValidationError("Выбери клуб, в котором сохранить шаблон.")
+            target_club_public_id = destinations[0]["public_id"]
+        if target_club_public_id not in {item["public_id"] for item in destinations}:
+            raise PermissionDenied("Нет права сохранять шаблон в этом клубе.")
+        club = await self.clubs._club(target_club_public_id)
+        name = self._template_name(name)
+        await self._template_lock(club.id)
+        await self._unique_template_name(club.id, name)
+        fields = {key: getattr(event, key) for key in TEMPLATE_FIELDS}
+        if event.starts_at:
+            fields["start_time"] = event.starts_at.astimezone(ZoneInfo("Europe/Moscow")).strftime(
+                "%H:%M"
+            )
+        elif event.template_start_time:
+            fields["start_time"] = event.template_start_time
+        if event.starts_at and event.ends_at:
+            fields["duration_minutes"] = max(
+                1, int((event.ends_at - event.starts_at).total_seconds() // 60)
+            )
+        elif event.template_duration_minutes:
+            fields["duration_minutes"] = event.template_duration_minutes
+        template = EventTemplate(
+            club_id=club.id, name=name, fields=validate_template_fields(fields)
+        )
+        self.session.add(template)
+        await self.session.flush()
+        self._template_audit(
+            actor_id,
+            "created",
+            template,
+            {
+                "source_event_id": str(event.id),
+                "source_event_version": event.version,
+            },
+        )
+        return self._template_dto(template, club)
+
+    async def get_template(self, actor_id: int, template_public_id: str) -> dict:
+        template, club = await self._template(actor_id, template_public_id)
+        return self._template_dto(template, club)
 
     async def templates(self, actor_id: int, club_public_id: str) -> list[dict]:
         await self.clubs.authorize(actor_id, club_public_id, "manage_events")
@@ -756,37 +919,60 @@ class EventService:
             .where(EventTemplate.club_id == club.id, EventTemplate.deleted_at.is_(None))
             .order_by(EventTemplate.name)
         )
-        return [
-            {"public_id": t.public_id, "name": t.name, "fields": t.fields, "version": t.version}
-            for t in rows
-        ]
+        return [self._template_dto(template, club) for template in rows]
 
-    async def from_template(self, actor_id: int, template_public_id: str) -> dict:
-        template = await self.session.scalar(
-            select(EventTemplate).where(
-                EventTemplate.public_id == template_public_id, EventTemplate.deleted_at.is_(None)
+    async def rename_template(
+        self, actor_id: int, template_public_id: str, name: str, expected_version: int
+    ) -> dict:
+        template, club = await self._template(actor_id, template_public_id, lock=True)
+        self._template_version(template, expected_version)
+        name = self._template_name(name)
+        await self._unique_template_name(club.id, name, except_id=template.id)
+        if template.name != name:
+            previous, template.name = template.name, name
+            template.version += 1
+            self._template_audit(
+                actor_id, "renamed", template, {"previous_name": previous, "name": name}
             )
+            await self.session.flush()
+        return self._template_dto(template, club)
+
+    async def update_template(
+        self, actor_id: int, template_public_id: str, fields: dict, expected_version: int
+    ) -> dict:
+        template, club = await self._template(actor_id, template_public_id, lock=True)
+        self._template_version(template, expected_version)
+        candidate = validate_template_fields(fields, template.fields)
+        if candidate != template.fields:
+            template.fields = candidate
+            template.version += 1
+            self._template_audit(actor_id, "updated", template, {"fields": sorted(fields)})
+            await self.session.flush()
+        return self._template_dto(template, club)
+
+    async def from_template(
+        self, actor_id: int, template_public_id: str, *, expected_version: int | None = None
+    ) -> dict:
+        template, club = await self._template(actor_id, template_public_id, lock=True)
+        if expected_version is not None:
+            self._template_version(template, expected_version)
+        fields = validate_template_fields({}, template.fields)
+        result = await self.create_draft(
+            actor_id, club.public_id, {k: v for k, v in fields.items() if k in TEMPLATE_FIELDS}
         )
-        if template is None:
-            raise ValidationError("Шаблон не найден.")
-        club = await self.session.get(Club, template.club_id)
-        return await self.create_draft(
-            actor_id, club.public_id, {k: v for k, v in template.fields.items() if k in EDIT_FIELDS}
-        )
+        event = await self._event(result["public_id"])
+        event.template_duration_minutes = fields.get("duration_minutes")
+        event.template_start_time = fields.get("start_time")
+        self._template_audit(actor_id, "used", template, {"event_id": str(event.id)})
+        await self.session.flush()
+        return await self._dto(event, actor_id)
 
     async def delete_template(
         self, actor_id: int, template_public_id: str, expected_version: int
     ) -> None:
-        template = await self.session.scalar(
-            select(EventTemplate)
-            .where(EventTemplate.public_id == template_public_id)
-            .with_for_update()
-        )
-        if template is None:
-            raise ValidationError("Шаблон не найден.")
-        club = await self.session.get(Club, template.club_id)
-        await self.clubs.authorize(actor_id, club.public_id, "manage_events")
-        if template.version != expected_version:
-            raise ValidationError("Шаблон изменился. Открой актуальную версию.")
+        template, _club = await self._template(actor_id, template_public_id, lock=True)
+        self._template_version(template, expected_version)
         template.deleted_at = utcnow()
         template.version += 1
+        self._template_audit(actor_id, "deleted", template)
+        await self.session.flush()

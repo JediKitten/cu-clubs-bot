@@ -18,6 +18,7 @@ from cu_clubs.identity_ui import handle_identity
 from cu_clubs.models import Conversation, TelegramUpdate
 from cu_clubs.screens import ScreenManager
 from cu_clubs.services import ClubNotFound, ClubService, PermissionDenied, ValidationError
+from cu_clubs.template_ui import handle_templates
 
 UNAVAILABLE = "Этот раздел ещё в разработке. Сейчас доступны клубы и управление профилем клуба."
 FIELDS = {
@@ -409,6 +410,10 @@ def build_dispatcher(sessionmaker: Any, settings: Any) -> Dispatcher:
                         session, user.id, state, message, data, settings, person
                     )
                     if flow is None:
+                        flow = await handle_templates(
+                            session, user.id, state, message, data, settings
+                        )
+                    if flow is None:
                         flow = await handle_events(session, user.id, state, message, data, settings)
                 if flow is not None:
                     text, markup, photo, banner_role = (
@@ -543,6 +548,7 @@ def build_dispatcher(sessionmaker: Any, settings: Any) -> Dispatcher:
                     if permissions["manage_events"]:
                         rows.append([("Создать встречу", f"eventnew:{public_id}")])
                         rows.append([("Черновики", f"eventdrafts:{public_id}")])
+                        rows.append([("Шаблоны", f"tmpls:{public_id}")])
                     if permissions["manage_events"] or permissions["record_attendance"]:
                         rows.append([("Встречи клуба", f"eventlist:{public_id}")])
                     if permissions["is_admin"]:
