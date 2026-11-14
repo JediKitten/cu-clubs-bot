@@ -39,6 +39,9 @@
 
 ## Документы
 
+- [Актуальный статус: доступно, осталось, предложения](docs/project-status.md).
+- [Подробная инструкция по API для лидеров и разработчиков](docs/api-guide-for-club-leaders.md).
+- [Технический контракт API](docs/api-integration.md).
 - [Решения владельца продукта](docs/decisions.md).
 - [План и распределение работы](docs/implementation-plan.md).
 - [Доступы и настройки для запуска](docs/access-checklist.md).
@@ -80,6 +83,7 @@ PostgreSQL. Без подключённой БД отрицательный ре
 ```sh
 uv run pytest
 uv run ruff check .
+python scripts/check_api_docs.py
 ```
 
 Для миграций, первоначального создания клуба и процессов:

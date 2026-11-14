@@ -36,6 +36,8 @@ jobs:
       - run: uv sync --locked
       - run: uv run --frozen ruff check .
       - run: uv run --frozen ruff format --check .
+      - name: Check API documentation route inventory
+        run: python scripts/check_api_docs.py
       - run: uv run --frozen pytest
       - name: Build application image
         run: docker build --tag cu-clubs:ci .

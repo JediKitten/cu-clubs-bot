@@ -1,5 +1,10 @@
 # API клубных ботов v1
 
+Проверено 14 ноября 2026 по реализации `d07e016`.
+Начни с [подробной инструкции лидера и разработчика](api-guide-for-club-leaders.md):
+получение ключа, адрес, запуск клиента, привязка студента, встречи, импорт,
+webhooks и ошибки. Здесь — краткий контракт и точный перечень маршрутов.
+
 Префикс `/api/v1`, JSON UTF-8, даты ISO 8601 с часовым поясом. Схема запросов,
 ответов и обязательных заголовков: `/openapi.json`, интерактивно `/docs`.
 Запускаемый пример: [club_api_client.py](../examples/club_api_client.py).
@@ -77,3 +82,39 @@ TLS-маршрут не настроен и порт не открыт на вс
 SMTP отложен: нового студента нельзя фиктивно подтвердить ради API. Исключение
 тестового лидера не подтверждает студенческую почту. При восстановлении сохранять
 тот же VERIFICATION_SECRET для encrypted inbox, idempotency и webhook secrets.
+
+## Точный перечень маршрутов
+
+Секция ниже проверяется CI по декораторам API. После изменения маршрутов:
+`python scripts/check_api_docs.py --update`, затем смысловая сверка обеих
+инструкций и примера клиента. Эта проверка не заменяет сверку полей и прав.
+
+<!-- api-routes:start -->
+| Метод | Путь |
+|---|---|
+| `POST` | `/api/v1/attendance-imports/{batch_id}/confirm` |
+| `POST` | `/api/v1/attendance-imports/{batch_id}/resolve` |
+| `GET` | `/api/v1/changes` |
+| `GET` | `/api/v1/clubs/{club_id}` |
+| `GET` | `/api/v1/events` |
+| `POST` | `/api/v1/events` |
+| `GET` | `/api/v1/events/{public_id}` |
+| `PATCH` | `/api/v1/events/{public_id}` |
+| `POST` | `/api/v1/events/{public_id}/attendance` |
+| `POST` | `/api/v1/events/{public_id}/attendance-imports` |
+| `POST` | `/api/v1/events/{public_id}/cancel` |
+| `POST` | `/api/v1/events/{public_id}/invite` |
+| `GET` | `/api/v1/events/{public_id}/participants` |
+| `GET` | `/api/v1/events/{public_id}/participants/me` |
+| `POST` | `/api/v1/events/{public_id}/publish` |
+| `DELETE` | `/api/v1/events/{public_id}/registrations/me` |
+| `PUT` | `/api/v1/events/{public_id}/registrations/me` |
+| `POST` | `/api/v1/links` |
+| `POST` | `/api/v1/links/{link_id}/exchange` |
+| `GET` | `/api/v1/me` |
+| `GET` | `/api/v1/webhook-deliveries` |
+| `POST` | `/api/v1/webhook-deliveries/{delivery_id}/retry` |
+| `GET` | `/api/v1/webhook-endpoints` |
+| `POST` | `/api/v1/webhook-endpoints` |
+| `DELETE` | `/api/v1/webhook-endpoints/{endpoint_id}` |
+<!-- api-routes:end -->

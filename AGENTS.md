@@ -35,3 +35,20 @@ before implementing or reviewing Telegram flows, event logic, QR, emails, or med
 - Keep Telegram/API business rules in shared application services. Historical
   QR limits and automatic registration on check-in must not override the newer
   owner-approved attendance rules.
+
+## API documentation and current status
+
+- The owner requests a maintained, detailed guide for club leaders with external
+  bots. Keep `docs/api-guide-for-club-leaders.md` and `docs/api-integration.md`
+  current in the same change as API routes, fields, permissions, consent,
+  errors, limits, client examples, or deployment access change. Update the
+  verification date and distinguish implemented behavior from live acceptance.
+- Run `python scripts/check_api_docs.py` when changing the API or its docs.
+  CI checks route coverage; this does not verify semantic accuracy, which must
+  be reviewed against application services and the example client.
+- `docs/project-status.md` is the current feature/backlog entry point. Update it
+  when features are implemented, deployed, deferred or accepted. Older release
+  reports are historical: do not silently treat their old status as current.
+- Do not call the API publicly available until its real HTTPS address is
+  configured and verified. Document the test-only leader exception separately
+  from actual student verification; never suggest a verification bypass.
