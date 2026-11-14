@@ -17,9 +17,12 @@ from cu_clubs.analytics_ui import handle_analytics
 from cu_clubs.api_ui import handle_integrations
 from cu_clubs.attendance_ui import handle_attendance
 from cu_clubs.calendar_ui import handle_calendar
+from cu_clubs.category_ui import category_gate
+from cu_clubs.club_card_ui import club_card_extras
 from cu_clubs.event_ui import handle_events
 from cu_clubs.identity_ui import handle_identity
 from cu_clubs.models import Conversation, TelegramUpdate
+from cu_clubs.notifications_ui import handle_notifications
 from cu_clubs.screens import ScreenManager, UIScreen
 from cu_clubs.services import ClubNotFound, ClubService, PermissionDenied, ValidationError
 from cu_clubs.survey_ui import handle_surveys
@@ -34,7 +37,9 @@ FIELDS = {
     "channel": legacy.text("set_club_link"),
     "cover": legacy.text("set_club_avatar"),
     "public_team": "Публичная команда",
+    "direction": "Направление клуба",
 }
+DIRECTIONS = {"hard": "Hard Skill Hub", "soft": "Soft Skill Hub", "health": "Health Hub"}
 
 
 def card_text(club: dict[str, Any], *, subscribed: bool = False) -> str:
@@ -53,11 +58,12 @@ def card_text(club: dict[str, Any], *, subscribed: bool = False) -> str:
         base = base.replace(heading, heading + "\nПодписка включена", 1)
     return (
         base
-        + f"\n\n<b>Уровень:</b> {escape(club['level'])}\n\n<b>Команда</b>\n{people}"
+        + f"\n\n<b>Уровень:</b> {escape(club['level'])}"
+        + ("\n<b>Направление:</b> " + escape(club["direction"]) if club.get("direction") else "")
+        + f"\n\n<b>Команда</b>\n{people}"
         + "".join(
             f"\n{escape(link['label'])}: {escape(link['url'])}" for link in club.get("links", [])
         )
-        + "\n\nБлижайшие встречи — в разделе «Мероприятия»."
     )
 
 
@@ -172,6 +178,7 @@ def _club_edit_hint(field):
         "cover": legacy.text("input_club_avatar") + "\n\nДля очистки — «Удалить».",
         "channel": legacy.text("input_club_link")
         + "\n\nМожно указать @username; для очистки — «Удалить».",
+        "direction": "Выбери направление клуба. Его можно изменить или убрать.",
     }[field]
 
 
@@ -184,6 +191,12 @@ def _club_edit_navigation(payload):
         else f"editmenu:{public_id}"
     )
     rows = [[("Назад", back)]]
+    if field == "direction":
+        rows = (
+            [[(label, f"clubdir:{payload['token']}:{code}")] for code, label in DIRECTIONS.items()]
+            + [[("Убрать направление", f"clubdir:{payload['token']}:none")]]
+            + rows
+        )
     if payload.get("sequence") and index:
         rows.append([("Выбрать другое поле", f"editmenu:{public_id}")])
     return keyboard(*rows)
@@ -202,6 +215,12 @@ def parse_value(field: str, message: Message) -> Any:
     if field == "name":
         if not 2 <= len(text) <= 100:
             raise ValidationError("Название должно содержать от 2 до 100 символов.")
+        return text
+    if field == "direction":
+        if text.lower() == "удалить":
+            return None
+        if text not in DIRECTIONS.values():
+            raise ValidationError("Выбери одно из трёх направлений кнопкой ниже.")
         return text
     if field == "description":
         if len(text) > 3000:
@@ -305,9 +324,21 @@ async def _club_card(service: ClubService, user_id: int, public_id: str) -> tupl
     if club is None:
         raise ClubNotFound("Клуб не найден.")
     subscribed = await service.get_subscription(user_id, public_id)
+    extras = await club_card_extras(
+        service.session, club, bot_username=None, include_direction=False
+    )
+    state = await service.session.get(Conversation, user_id)
+    if state is not None:
+        state.state, state.payload = "idle", {"club_origin": public_id}
     return (
-        card_text(club, subscribed=subscribed),
+        card_text(club, subscribed=subscribed)
+        + "\n\n"
+        + (extras["text"] or "Ближайших открытых встреч пока нет."),
         keyboard(
+            *[
+                [(event["title"][:45], f"cevent:{event['public_id']}")]
+                for event in extras["events"]
+            ],
             [
                 (
                     legacy.text("disable_mailing_from_this_club")
@@ -436,13 +467,29 @@ def build_dispatcher(sessionmaker: Any, settings: Any) -> Dispatcher:
                 service = ClubService(session)
                 person = await service.get_or_create_person(user.id, user.full_name, user.username)
                 state = await _conversation(session, user.id)
+                category = await category_gate(
+                    session,
+                    user.id,
+                    state,
+                    person,
+                    command if command and command[0].startswith("/") else [],
+                    data,
+                    settings,
+                    message,
+                )
+                if category and category.resume:
+                    data, command = category.resume, []
+                    message = None
+                    person = await service.get_or_create_person(
+                        user.id, user.full_name, user.username
+                    )
                 start_event = (
                     message
                     and len(command) == 2
                     and command[0].split("@", 1)[0] == "/start"
                     and command[1].startswith("e_")
                 )
-                flow = None
+                flow = category.screen if category else None
                 start_qr = (
                     message
                     and len(command) == 2
@@ -455,7 +502,9 @@ def build_dispatcher(sessionmaker: Any, settings: Any) -> Dispatcher:
                     and command[0].split("@", 1)[0] == "/start"
                     and command[1].startswith("l_")
                 )
-                if start_qr:
+                if flow is not None:
+                    pass
+                elif start_qr:
                     _reset(state)
                     flow = await handle_attendance(
                         session, user.id, state, None, f"aq:{command[1][2:]}", settings
@@ -476,6 +525,10 @@ def build_dispatcher(sessionmaker: Any, settings: Any) -> Dispatcher:
                     )
                     if flow is None:
                         flow = await handle_integrations(
+                            session, user.id, state, message, data, settings
+                        )
+                    if flow is None:
+                        flow = await handle_notifications(
                             session, user.id, state, message, data, settings
                         )
                     if flow is None:
@@ -588,6 +641,24 @@ def build_dispatcher(sessionmaker: Any, settings: Any) -> Dispatcher:
                         else:
                             text, markup = await _menu(service, user.id)
                             banner_role = "menu"
+                elif data.startswith("clubdir:"):
+                    _, token, choice = data.split(":")
+                    if (
+                        state.state != "club_profile_edit"
+                        or state.payload.get("field") != "direction"
+                        or state.payload.get("token") != token
+                        or choice not in {*DIRECTIONS, "none"}
+                    ):
+                        raise ValidationError("Кнопка устарела. Открой направление клуба заново.")
+                    club = await _profile_access(service, user.id, state.payload["club"])
+                    value = DIRECTIONS.get(choice)
+                    state.state = "club_profile_preview"
+                    state.payload = {**state.payload, "value": value}
+                    text, photo = (
+                        "<b>Предпросмотр</b>\n\n" + card_text({**club, "direction": value}),
+                        club.get("cover"),
+                    )
+                    markup, banner_role = _confirmation("save", state), "club-owner"
                 elif data.startswith("cancel:") and data != f"cancel:{state.payload.get('token')}":
                     text = "Эта кнопка относится к другому изменению. Продолжи текущий диалог."
                 elif data in {"menu", "cancel"} or data.startswith("cancel:"):
@@ -740,7 +811,11 @@ def build_dispatcher(sessionmaker: Any, settings: Any) -> Dispatcher:
                         "cover": "club_avatar_set",
                     }.get(payload["field"])
                     success = (
-                        legacy.text(success_key) if success_key else "Публичная команда сохранена."
+                        legacy.text(success_key)
+                        if success_key
+                        else "Направление клуба сохранено."
+                        if payload["field"] == "direction"
+                        else "Публичная команда сохранена."
                     )
                     _reset(state)
                     text, photo = success + "\n\n" + card_text(club), club.get("cover")

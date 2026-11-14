@@ -42,6 +42,8 @@ def _telegram_id(value: int) -> int:
 
 
 class ClubService:
+    CLUB_DIRECTIONS = {"Hard Skill Hub", "Soft Skill Hub", "Health Hub"}
+
     def __init__(self, session: AsyncSession):
         self.session = session
 
@@ -117,7 +119,11 @@ class ClubService:
         else:
             person = account.person
             # A Telegram display name must never overwrite the person's submitted FIO.
-            if person.kind is None and person.time_login is None:
+            if (
+                person.kind is None
+                and person.time_login is None
+                and person.declared_category is None
+            ):
                 person.full_name = full_name
             account.username = username
         return {
@@ -126,6 +132,8 @@ class ClubService:
             "full_name": person.full_name,
             "username": account.username,
             "kind": person.kind,
+            "declared_category": person.declared_category,
+            "category_selected_at": person.category_selected_at,
             "verified_at": person.verified_at,
             "time_login": person.time_login,
         }
@@ -152,6 +160,7 @@ class ClubService:
             "name": club.name,
             "level": club.level_name,
             "description": club.description,
+            "direction": club.direction,
             "channel": club.channel,
             "cover": club.cover,
             "links": club.links,
@@ -275,20 +284,30 @@ class ClubService:
             )
             await self.session.flush()
             await self.session.refresh(club, attribute_names=["public_team"])
-        elif field in {"name", "description", "channel", "cover"}:
-            if value is None and field in {"channel", "cover"}:
+        elif field in {"name", "description", "direction", "channel", "cover"}:
+            if value is None and field in {"direction", "channel", "cover"}:
                 normalized = None
             elif isinstance(value, str):
                 normalized = value.strip()
-                limits = {"name": 200, "description": 10000, "channel": 500, "cover": 2000}
+                limits = {
+                    "name": 200,
+                    "description": 10000,
+                    "direction": 100,
+                    "channel": 500,
+                    "cover": 2000,
+                }
                 if len(normalized) > limits[field] or (field == "name" and not normalized):
                     raise ValidationError(f"Недопустимая длина поля {field}")
-                if field in {"channel", "cover"} and not normalized:
+                if field in {"direction", "channel", "cover"} and not normalized:
                     normalized = None
                 if field == "channel" and normalized:
                     self._validate_url(normalized)
             else:
                 raise ValidationError("Нужно текстовое значение")
+            if field == "direction" and normalized not in (None, *self.CLUB_DIRECTIONS):
+                raise ValidationError(
+                    "Выбери одно из направлений: Hard Skill Hub, Soft Skill Hub, Health Hub"
+                )
             setattr(club, field, normalized)
         else:
             raise ValidationError("Это поле нельзя изменить через профиль клуба")

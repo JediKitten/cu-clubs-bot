@@ -7,6 +7,7 @@ from uuid import uuid4
 from aiogram.types import BufferedInputFile
 
 from cu_clubs import legacy
+from cu_clubs.access import can_check_in, self_registration_enabled
 from cu_clubs.attendance import AttendanceService, qr_photo
 from cu_clubs.attendance_xlsx import export_attendance_xlsx, template_attendance_xlsx
 from cu_clubs.identity import normalize_login, normalize_name
@@ -174,6 +175,12 @@ async def handle_attendance(session, user_id, state, message, data, settings, *,
         try:
             qr = await service.get_personal_qr(user_id, rotate=data.endswith("rotate"))
         except PermissionDenied as error:
+            if self_registration_enabled(session):
+                return _screen(
+                    "Чтобы открыть личный QR, сначала выбери категорию.",
+                    [("Выбрать категорию", "category:profile")],
+                    [("Назад", "profile")],
+                )
             return _screen(
                 str(error), [("Подтвердить почту", "auth:aqpersonal")], [("В меню", "menu")]
             )
@@ -198,7 +205,7 @@ async def handle_attendance(session, user_id, state, message, data, settings, *,
             return _person_choices(state, 0)
         _state(state, "attendance_self", qr_id=qr["qr_id"], event=qr["event"])
         person = await service._person(user_id)
-        if person.kind == "guest" or person.verified_at is not None:
+        if can_check_in(session, person):
             return _screen(
                 escape(qr["title"]),
                 [("Отметить посещение", f"atself:{state.payload['nonce']}")],

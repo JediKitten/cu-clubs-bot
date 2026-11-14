@@ -5,6 +5,7 @@ from uuid import uuid4
 
 from aiogram.types import BufferedInputFile
 
+from cu_clubs.access import self_registration_enabled
 from cu_clubs.api_models import ApiClient
 from cu_clubs.api_security import ApiError
 from cu_clubs.api_service import SCOPES, ApiService, as_uuid
@@ -35,7 +36,14 @@ async def handle_integrations(session, user_id, state, message, data, settings):
                 else api.link_view(user_id, data.split(":", 1)[1])
             )
             state_set(state, "apilink_review", link=item["id"])
-            if not item["verified"]:
+            if not item.get("eligible", item["verified"]):
+                if self_registration_enabled(session):
+                    return screen(
+                        f"Подключение: {escape(item['name'])}\nКлуб: {escape(item['club'])}"
+                        "\n\nЗапись через клубного бота доступна студентам и сотрудникам. "
+                        "Абитуриенты и внешние гости участвуют через QR встречи.",
+                        [("Личный кабинет", "profile")],
+                    )
                 return screen(
                     f"Подключение: {escape(item['name'])}\nКлуб: {escape(item['club'])}"
                     "\n\nСначала подтверди студенческую почту. "

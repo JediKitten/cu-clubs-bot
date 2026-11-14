@@ -18,6 +18,7 @@ for module_name in (
     "calendar_models",
     "survey_models",
     "api_models",
+    "notification_models",
     "screens",
 ):
     import_module("cu_clubs." + module_name)

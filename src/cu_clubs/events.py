@@ -9,6 +9,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from cu_clubs.access import can_register
 from cu_clubs.event_models import (
     Event,
     EventClub,
@@ -541,7 +542,7 @@ class EventService:
         event = await self._event(event_public_id, lock=True)
         await self._view(event, actor_id, via_link)
         person = await self._person(actor_id)
-        if person.kind != "student" or person.verified_at is None or not person.time_login:
+        if not can_register(self.session, person):
             raise PermissionDenied("Подтверди студенческую почту, чтобы записаться.")
         registration = await self._registration(event, actor_id)
         if registration and registration.status == "active":

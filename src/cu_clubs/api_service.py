@@ -9,6 +9,7 @@ from uuid import UUID
 from sqlalchemy import func, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 
+from cu_clubs.access import can_register
 from cu_clubs.api_models import (
     ApiChange,
     ApiClient,
@@ -254,7 +255,7 @@ class ApiService:
         account = await self.session.scalar(
             select(TelegramAccount).where(TelegramAccount.person_id == grant.person_id)
         )
-        if not account or account.person.kind != "student" or account.person.verified_at is None:
+        if not account or not can_register(self.session, account.person):
             raise ApiError(403, "VERIFICATION_REQUIRED", "Student email verification is required")
         return account.telegram_id, grant
 
@@ -323,13 +324,15 @@ class ApiService:
             "name": client.name,
             "club": club.name,
             "verified": account.person.kind == "student" and account.person.verified_at is not None,
+            "eligible": can_register(self.session, account.person),
+            "declared_category": account.person.declared_category,
             "approved": row.approved_at is not None,
         }
 
     async def approve_link(self, actor, link_id):
         row = await self.session.get(ApiLink, as_uuid(link_id), with_for_update=True)
         account, _ = await self._link_actor(actor, row)
-        if account.person.kind != "student" or account.person.verified_at is None:
+        if not can_register(self.session, account.person):
             raise PermissionDenied("Подтверди студенческую почту перед привязкой.")
         if row.approved_at is None:
             row.approved_at, row.person_id = now(), account.person_id
@@ -358,8 +361,7 @@ class ApiService:
         if (
             not account
             or account.person_id != row.person_id
-            or account.person.verified_at is None
-            or account.person.kind != "student"
+            or not can_register(self.session, account.person)
         ):
             raise ApiError(403, "VERIFICATION_REQUIRED", "Student verification is required")
         await self.session.execute(

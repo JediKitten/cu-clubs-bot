@@ -9,7 +9,8 @@ r"""Runnable club API client; credentials come exclusively from environment/file
     python examples/club_api_client.py publish EVENT_ID --version 1
     # Or invite EVENT_ID --club PARTNER_ID --version 1; its leader accepts in Telegram.
     python examples/club_api_client.py link --telegram-id NUMERIC_ID --link-file link.json
-    # Student opens verification_uri, verifies email and explicitly agrees in Telegram.
+    # User opens verification_uri and explicitly agrees in Telegram.
+    # Test mode: select student/staff; strict mode: verify student email.
     python examples/club_api_client.py exchange --link-file link.json --token-file user-token.txt
     # Load the file's token into CU_CLUBS_USER_TOKEN via your secret manager.
     python examples/club_api_client.py register EVENT_ID

@@ -6,6 +6,7 @@ from uuid import UUID
 from sqlalchemy import or_, select
 from sqlalchemy.dialects.postgresql import insert
 
+from cu_clubs.access import CATEGORIES, self_registration_enabled
 from cu_clubs.attendance_models import Attendance
 from cu_clubs.event_models import Event
 from cu_clubs.events import EventService
@@ -389,6 +390,9 @@ class SurveysService:
     async def enqueue_invitations(self, now=None):
         """Late attendance/profile linkage is discovered on each tick; unique outbox dedupes."""
         now = now or utcnow()
+        profile_ready = or_(Person.kind == "guest", Person.verified_at.is_not(None))
+        if self_registration_enabled(self.session):
+            profile_ready = or_(profile_ready, Person.declared_category.in_(CATEGORIES))
         rows = (
             await self.session.execute(
                 select(Event, Attendance, TelegramAccount)
@@ -398,7 +402,7 @@ class SurveysService:
                 .where(
                     Event.status.in_(["published", "held"]),
                     Event.ends_at <= now,
-                    or_(Person.kind == "guest", Person.verified_at.is_not(None)),
+                    profile_ready,
                 )
             )
         ).all()

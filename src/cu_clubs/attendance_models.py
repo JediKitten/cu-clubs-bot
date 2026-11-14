@@ -80,6 +80,7 @@ class Attendance(Base):
     full_name_at_mark: Mapped[str] = mapped_column(String(300))
     time_login_at_mark: Mapped[str | None] = mapped_column(String(100))
     telegram_tag_at_mark: Mapped[str | None] = mapped_column(String(64))
+    category_at_mark: Mapped[str | None] = mapped_column(String(20))
     guest_at_mark: Mapped[bool] = mapped_column(Boolean)
     was_bot_registered: Mapped[bool] = mapped_column(Boolean)
     was_registered: Mapped[bool] = mapped_column(Boolean)

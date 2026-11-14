@@ -16,6 +16,7 @@ from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert
 
 from cu_clubs import legacy
+from cu_clubs.access import CATEGORIES, can_check_in, is_guest
 from cu_clubs.attendance_models import Attendance, AttendanceImport, AttendanceQR, AttendanceQRGrant
 from cu_clubs.event_models import Event, Registration
 from cu_clubs.events import EventService
@@ -139,7 +140,7 @@ class AttendanceService:
 
     async def get_personal_qr(self, actor, *, rotate=False):
         person = await self._person(actor)
-        if person.kind != "guest" and (person.verified_at is None or not person.time_login):
+        if not can_check_in(self.session, person):
             raise PermissionDenied("Подтверди студенческую почту, чтобы открыть личный QR")
         return await self._token(actor, "personal", person=person, rotate=rotate)
 
@@ -262,7 +263,7 @@ class AttendanceService:
                 "person_id": str(person.id),
                 "full_name": person.full_name,
             }
-        if person.kind == "guest":
+        if is_guest(self.session, person):
             if source not in {"event_qr", "personal_qr"}:
                 raise PermissionDenied("Гости могут отмечаться только через QR")
             await self._guest_allowed(event)
@@ -280,7 +281,8 @@ class AttendanceService:
             actor_telegram_id=actor,
             full_name_at_mark=person.full_name,
             time_login_at_mark=person.time_login,
-            guest_at_mark=person.kind == "guest",
+            guest_at_mark=is_guest(self.session, person),
+            category_at_mark=person.declared_category,
             was_bot_registered=bot_account is not None,
             telegram_tag_at_mark=tag,
             was_registered=registration is not None and registration.status == "active",
@@ -317,9 +319,7 @@ class AttendanceService:
         event = await self._event(model.public_id, lock=True)
         await self._resolve(raw, "event", lock=True)
         person = await self._person(actor)
-        if person.kind != "guest" and (
-            person.kind != "student" or not person.time_login or person.verified_at is None
-        ):
+        if not can_check_in(self.session, person):
             raise PermissionDenied("Подтверди студенческую почту перед отметкой")
         return await self._mark(actor, event, person, "event_qr")
 
@@ -329,7 +329,7 @@ class AttendanceService:
         await self._authorize(actor, event)
         await self._resolve(raw, "personal", lock=True)
         person = await self.session.get(Person, token.person_id)
-        if person.kind != "guest" and (person.kind != "student" or person.verified_at is None):
+        if not can_check_in(self.session, person):
             raise PermissionDenied("Посетитель должен подтвердить студенческую почту")
         return await self._mark(actor, event, person, "personal_qr")
 
@@ -416,7 +416,9 @@ class AttendanceService:
                 "meeting": event.title,
                 "clubs": club_names,
                 "date": event.starts_at.astimezone(ZoneInfo("Europe/Moscow")).isoformat(),
-                "visitor_type": "Гость" if record.guest_at_mark else "Студент",
+                "visitor_type": CATEGORIES.get(
+                    record.category_at_mark, "Гость" if record.guest_at_mark else "Студент"
+                ),
                 "pre_registration": person.id in registrations or record.was_registered,
                 "registration_status": {"active": "Активна", "cancelled": "Отменена"}.get(
                     registrations[person.id].status, "Нет записи"
@@ -445,7 +447,10 @@ class AttendanceService:
                         "clubs": club_names,
                         "date": event.starts_at.astimezone(ZoneInfo("Europe/Moscow")).isoformat(),
                         "full_name": person.full_name,
-                        "visitor_type": "Гость" if person.kind == "guest" else "Студент",
+                        "visitor_type": CATEGORIES.get(
+                            person.declared_category,
+                            "Гость" if person.kind == "guest" else "Студент",
+                        ),
                         "time_login": person.time_login,
                         "telegram_tag": account.username if account else None,
                         "pre_registration": True,
@@ -672,6 +677,7 @@ async def merge_attendance_people(session, old_person_id, new_person_id, actor=N
         "time_login_at_mark",
         "telegram_tag_at_mark",
         "guest_at_mark",
+        "category_at_mark",
         "was_bot_registered",
         "was_registered",
         "registered_at_start",

@@ -5,6 +5,7 @@ from html import escape
 from uuid import uuid4
 
 from cu_clubs import legacy
+from cu_clubs.access import CATEGORIES, self_registration_enabled
 from cu_clubs.identity import AdminService, IdentityService, normalize_login, normalize_name
 from cu_clubs.services import ClubService, PermissionDenied, ValidationError
 from cu_clubs.ui_common import Screen, keyboard
@@ -193,8 +194,32 @@ async def _auth_success(session, user_id, state, settings):
 
 async def handle_identity(session, user_id, state, message, data, settings, person=None):
     """Return a screen when this flow owns an action, otherwise leave it untouched."""
+    temporary = self_registration_enabled(session)
+    if temporary and (data.startswith("auth") or state.state.startswith("auth_")):
+        from cu_clubs.category_ui import begin_category
+
+        origin = _origin(data[5:] if data.startswith("auth:") else state.payload.get("resume"))
+        return begin_category(state, origin)
     if data == "profile":
         person = person or await _identity(session, settings).profile(user_id)
+        if temporary:
+            category = person.get("declared_category")
+            role = {"student": "student", "applicant": "grant_user", "external": "external_user"}
+            text = legacy.personal_account_text(person["full_name"], role.get(category))
+            if category == "staff":
+                text = text.replace("<b>не определена</b>", "<b>сотрудник</b>")
+            text += f"\n\nКатегория: {escape(CATEGORIES.get(category, 'Не выбрана'))}"
+            text += "\nПодтверждение почты пока не требуется."
+            return Screen(
+                text,
+                keyboard(
+                    [("Мой QR", "aqpersonal")],
+                    [("Изменить категорию", "category:profile")],
+                    [("Подключённые боты", "apigrants")],
+                    [("В меню", "menu")],
+                ),
+                banner_role="personal-account",
+            )
         verified = bool(person.get("verified_at"))
         guest = person.get("kind") == "guest"
         text = legacy.personal_account_text(

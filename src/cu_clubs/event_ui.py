@@ -9,6 +9,7 @@ from aiogram.types import Message
 
 from cu_clubs import event_schedule_ui as schedule
 from cu_clubs import legacy
+from cu_clubs.access import can_register, self_registration_enabled
 from cu_clubs.events import EventService
 from cu_clubs.models import Conversation
 from cu_clubs.services import ClubService, PermissionDenied, ValidationError
@@ -153,7 +154,8 @@ def _screen(text, rows=None, *, role="events") -> Screen:
 
 
 def _reset(state):
-    state.state, state.payload = "idle", {}
+    origin = state.payload.get("club_origin")
+    state.state, state.payload = "idle", {"club_origin": origin} if origin else {}
 
 
 async def _card(service, user_id, public_id, *, via_link=False) -> Screen:
@@ -168,6 +170,8 @@ async def _card(service, user_id, public_id, *, via_link=False) -> Screen:
         else:
             rows.append([(legacy.text("register"), f"evreg:{public_id}{suffix}")])
     if event["can_manage"]:
+        if event["status"] in {"published", "held", "cancelled"}:
+            rows.append([("Уведомления", f"nt:{public_id}")])
         if event["status"] == "draft" and (
             event.get("template_start_time") or not event["starts_at"]
         ):
@@ -203,9 +207,16 @@ async def _card(service, user_id, public_id, *, via_link=False) -> Screen:
         rows.append([("Поделиться", f"evshare:{public_id}{suffix}")])
     for club in event["clubs"]:
         rows.append([(club["name"], f"club:{club['public_id']}")])
+    state = await service.session.get(Conversation, user_id)
+    origin = state.payload.get("club_origin") if state else None
+    back = (
+        f"club:{origin}"
+        if origin and any(club["public_id"] == origin for club in event["clubs"])
+        else "events"
+    )
     rows.append(
         [
-            (legacy.text("back"), "events"),
+            (legacy.text("back"), back),
             (legacy.text("main_menu_text").replace("<b>", "").replace("</b>", ""), "menu"),
         ]
     )
@@ -369,6 +380,17 @@ async def handle_events(
 ) -> Screen | None:
     service = EventService(session)
     data = {"future:events": "events", "future:mine": "my_events"}.get(data, data)
+    if data in {"events", "my_events"} or data.startswith(
+        ("eventsweek:", "eventnew:", "eventlist:", "eventdrafts:")
+    ):
+        state.payload = {key: value for key, value in state.payload.items() if key != "club_origin"}
+    if data.startswith("cevent:"):
+        origin = state.payload.get("club_origin")
+        event = await service.get_event(data.split(":", 1)[1], user_id)
+        if not origin or not any(club["public_id"] == origin for club in event["clubs"]):
+            raise ValidationError("Открой встречу из актуальной карточки клуба.")
+        _reset(state)
+        return await _card(service, user_id, event["public_id"])
     if state.state == "event_edit" and state.payload.get("field") in schedule.TIME_FIELDS:
         event = await service.get_event(state.payload["event"], user_id)
         screen = schedule.begin(
@@ -565,8 +587,15 @@ async def handle_events(
         public_id, via_link = parts[1], len(parts) == 3 and parts[2] == "link"
         event = await service.get_event(public_id, user_id, via_link=via_link)
         account = await ClubService(session)._account(user_id)
-        if not account or account.person.verified_at is None or account.person.kind != "student":
+        if not account or not can_register(session, account.person):
             resume = f"event:{public_id}" + (":link" if via_link else "")
+            if self_registration_enabled(session):
+                return _screen(
+                    "Предварительная запись доступна студентам и сотрудникам. "
+                    "Абитуриенты и внешние гости могут отметиться по QR встречи "
+                    "клуба Seed или выше.",
+                    [[(legacy.text("back"), resume)]],
+                )
             return _screen(
                 "Подтверди студенческую почту, чтобы записаться.",
                 [[("Подтвердить почту", f"auth:{resume}")], [(legacy.text("back"), resume)]],

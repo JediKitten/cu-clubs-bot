@@ -81,6 +81,8 @@ def _profile(person: Person, telegram_id: int) -> dict:
         "time_login": person.time_login,
         "kind": person.kind,
         "verified_at": person.verified_at,
+        "declared_category": person.declared_category,
+        "category_selected_at": person.category_selected_at,
     }
 
 
@@ -103,6 +105,42 @@ class IdentityService:
         if account is None:
             raise ValidationError("Сначала открой бота")
         return _profile(account.person, telegram_id)
+
+    async def declare_category(
+        self, telegram_id: int, category: str, *, full_name: str | None = None
+    ) -> dict:
+        from cu_clubs.access import CATEGORIES, self_registration_enabled
+
+        if not self_registration_enabled(self.session):
+            raise PermissionDenied("Выбор категории без почты сейчас недоступен.")
+        if category not in CATEGORIES:
+            raise ValidationError("Неизвестная категория.")
+        person = await self._lock_person(telegram_id)
+        if full_name is not None:
+            if category not in {"applicant", "external"} or person.verified_at or person.time_login:
+                raise ValidationError("Используй существующие данные профиля.")
+            person.full_name, person.kind = normalize_name(full_name), "guest"
+        previous = person.declared_category
+        person.declared_category, person.category_selected_at = category, self.now
+        await self.session.execute(
+            update(EmailChallenge)
+            .where(
+                EmailChallenge.person_id == person.id,
+                EmailChallenge.consumed_at.is_(None),
+                EmailChallenge.invalidated_at.is_(None),
+            )
+            .values(invalidated_at=self.now)
+        )
+        self.session.add(
+            Audit(
+                actor_telegram_id=telegram_id,
+                action="identity.category.declared",
+                entity_id=person.id,
+                details={"previous": previous, "category": category},
+            )
+        )
+        await self.session.flush()
+        return _profile(person, telegram_id)
 
     async def _lock_person(self, telegram_id: int) -> Person:
         await self.session.execute(

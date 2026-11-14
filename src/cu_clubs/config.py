@@ -33,6 +33,7 @@ class Settings(BaseSettings):
     bootstrap_admin_ids: list[PositiveInt] = Field(default_factory=list)
     bootstrap_leader_telegram_id: PositiveInt | None = None
     test_allow_unverified_leaders: bool = False
+    test_self_registration_enabled: bool = False
 
     external_delivery_enabled: bool = False
     telegram_bot_token: SecretStr | None = None
@@ -92,6 +93,8 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_delivery_credentials(self) -> Self:
+        if self.test_self_registration_enabled and self.environment != "test":
+            raise ValueError("Self registration is allowed only in the test environment")
         if self.test_allow_unverified_leaders and self.environment != "test":
             raise ValueError("Unverified leaders are allowed only in the test environment")
         if self.external_delivery_enabled:

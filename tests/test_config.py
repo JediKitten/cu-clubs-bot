@@ -44,3 +44,19 @@ def test_empty_optional_environment_values_are_unset(monkeypatch) -> None:
 def test_invalid_timezone_is_rejected() -> None:
     with pytest.raises(ValidationError, match="IANA timezone"):
         Settings(_env_file=None, timezone="Not/A_Timezone")
+
+
+@pytest.mark.parametrize("environment", ["local", "production"])
+def test_self_declared_access_cannot_be_enabled_outside_test(environment):
+    with pytest.raises(ValidationError, match="Self registration"):
+        Settings(_env_file=None, environment=environment, test_self_registration_enabled=True)
+
+
+def test_self_declared_access_is_explicit_and_test_only():
+    assert Settings(_env_file=None, environment="test").test_self_registration_enabled is False
+    assert (
+        Settings(
+            _env_file=None, environment="test", test_self_registration_enabled=True
+        ).test_self_registration_enabled
+        is True
+    )

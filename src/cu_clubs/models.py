@@ -27,6 +27,19 @@ class Base(DeclarativeBase):
 
 class Person(Base):
     __tablename__ = "people"
+    __table_args__ = (
+        CheckConstraint(
+            "declared_category IS NULL OR "
+            "declared_category IN ('student','staff','applicant','external')",
+            name="ck_person_declared_category",
+        ),
+        CheckConstraint(
+            "(declared_category IS NULL) = (category_selected_at IS NULL)",
+            name="ck_person_category_selected",
+        ),
+    )
+    declared_category: Mapped[str | None] = mapped_column(String(20))
+    category_selected_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     full_name: Mapped[str] = mapped_column(String(300))
     kind: Mapped[str | None] = mapped_column(String(20))
@@ -64,6 +77,7 @@ class Club(Base):
     name: Mapped[str] = mapped_column(String(200))
     level_name: Mapped[str] = mapped_column(ForeignKey("club_levels.name"))
     description: Mapped[str] = mapped_column(Text, default="", server_default="")
+    direction: Mapped[str | None] = mapped_column(String(100))
     channel: Mapped[str | None] = mapped_column(String(500))
     cover: Mapped[str | None] = mapped_column(Text)
     links: Mapped[list[dict]] = mapped_column(

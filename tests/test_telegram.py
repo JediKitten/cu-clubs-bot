@@ -52,6 +52,7 @@ class MemoryDB:
 class MemorySession:
     def __init__(self, db):
         self.db = db
+        self.info = {}
 
     async def __aenter__(self):
         return self
@@ -90,6 +91,7 @@ async def memory_conversation(session, user_id):
 
 class MemoryService:
     def __init__(self, session):
+        self.session = session
         self.db = session.db
         assert self.db.active
 
@@ -298,6 +300,10 @@ class Interaction:
 
 @pytest.fixture
 def interaction(monkeypatch):
+    async def no_upcoming_events(*args, **kwargs):
+        return {"text": "", "events": [], "back_route": None}
+
+    monkeypatch.setattr(telegram, "club_card_extras", no_upcoming_events)
     monkeypatch.setattr(telegram, "ClubService", MemoryService)
     monkeypatch.setattr(telegram, "_conversation", memory_conversation)
 

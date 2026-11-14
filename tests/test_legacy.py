@@ -143,7 +143,6 @@ def test_club_card_preserves_original_block_and_appends_new_fields():
     assert telegram.card_text(club) == (
         original_block + "\n\n<b>Уровень:</b> Seed\n\n<b>Команда</b>\n"
         "• &lt;Кир&gt; — Кино &amp; программа"
-        "\n\nБлижайшие встречи — в разделе «Мероприятия»."
     )
 
 

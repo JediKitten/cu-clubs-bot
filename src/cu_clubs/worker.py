@@ -140,7 +140,10 @@ async def claim_outbox(sessions) -> dict | None:
             .where(Outbox.status == "pending", Outbox.available_at <= now)
             .where(
                 or_(
-                    Outbox.kind != "survey.invitation",
+                    and_(
+                        Outbox.kind != "survey.invitation",
+                        ~Outbox.kind.startswith("notification."),
+                    ),
                     ~select(Conversation.telegram_id)
                     .where(
                         Conversation.telegram_id == Outbox.recipient_telegram_id,
@@ -287,7 +290,41 @@ async def deliver_domain_notice(sessions, bot: Bot, item: dict, settings: Settin
 async def process_outbox(sessions, bot: Bot, item: dict, settings: Settings) -> None:
     values = {"lease_until": None}
     try:
-        if item["kind"] == "survey.invitation":
+        if item["kind"].startswith("notification."):
+            from cu_clubs.notifications import NotificationsService
+
+            async with sessions.begin() as session:
+                conversation = await session.get(
+                    Conversation, item["recipient"], with_for_update=True
+                )
+                if conversation is not None and conversation.state != "idle":
+                    # Input may have started after claim_outbox checked eligibility.
+                    await session.execute(
+                        update(Outbox)
+                        .where(
+                            Outbox.id == item["id"],
+                            Outbox.status == "processing",
+                            Outbox.attempts == item["attempts"],
+                        )
+                        .values(
+                            status="pending",
+                            lease_until=None,
+                            available_at=utcnow() + timedelta(seconds=60),
+                        )
+                    )
+                    return
+                target = await NotificationsService(session).delivery(item)
+                if target is None:
+                    result = SimpleNamespace(message_id=None)
+                else:
+                    message_id = await ScreenManager(sessions, bot).show(
+                        item["recipient"],
+                        target["text"],
+                        keyboard([(target["label"], target["callback"])]),
+                        force_new=True,
+                    )
+                    result = SimpleNamespace(message_id=message_id)
+        elif item["kind"] == "survey.invitation":
             from cu_clubs.surveys import SurveysService
 
             async with sessions() as session:
@@ -468,6 +505,18 @@ async def survey_loop(sessions):
         await asyncio.sleep(60)
 
 
+async def notification_loop(sessions):
+    from cu_clubs.notifications import NotificationsService
+
+    while True:
+        try:
+            async with sessions.begin() as session:
+                await NotificationsService(session).schedule()
+        except Exception as error:
+            logger.warning("Notification scheduling failed: %s", type(error).__name__)
+        await asyncio.sleep(60)
+
+
 async def run_worker(settings: Settings) -> None:
     if not settings.external_delivery_enabled:
         raise ValueError("Worker requires external delivery to be enabled explicitly")
@@ -479,6 +528,7 @@ async def run_worker(settings: Settings) -> None:
     calendar_task = None
     survey_task = None
     api_task = None
+    notification_task = None
     try:
         identity = await bot.get_me()
         if identity.username != settings.telegram_bot_username:
@@ -486,6 +536,7 @@ async def run_worker(settings: Settings) -> None:
         if settings.calendar_sync_enabled:
             calendar_task = asyncio.create_task(calendar_loop(sessions, settings))
         survey_task = asyncio.create_task(survey_loop(sessions))
+        notification_task = asyncio.create_task(notification_loop(sessions))
         if settings.api_enabled:
             from cu_clubs.api_delivery import loop
 
@@ -546,7 +597,9 @@ async def run_worker(settings: Settings) -> None:
                 await asyncio.sleep(0.5)
     finally:
         tasks = [
-            task for task in (calendar_task, polling, survey_task, api_task) if task is not None
+            task
+            for task in (calendar_task, polling, survey_task, api_task, notification_task)
+            if task is not None
         ]
         for task in tasks:
             task.cancel()

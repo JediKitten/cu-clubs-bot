@@ -437,7 +437,8 @@ async def me(request: Request, ctx: Ctx):
             "person_id": str(account.person_id),
             "full_name": account.person.full_name,
             "time_login": account.person.time_login,
-            "verified": True,
+            "verified": account.person.verified_at is not None,
+            "declared_category": account.person.declared_category,
         }
 
 

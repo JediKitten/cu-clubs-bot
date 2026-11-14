@@ -121,6 +121,10 @@ async def merge_into_imported(session, old, canonical, actor):
     await session.execute(
         update(TelegramAccount).where(TelegramAccount.person_id == old_id).values(person_id=new_id)
     )
+    if old.declared_category is not None:
+        canonical.declared_category = old.declared_category
+        canonical.category_selected_at = old.category_selected_at
+    old.declared_category, old.category_selected_at = None, None
     old.time_login, old.verified_at, old.kind = None, None, None
     session.add(
         Audit(
