@@ -21,6 +21,12 @@ before implementing or reviewing Telegram flows, event logic, QR, emails, or med
 - Original banners were provided by the owner. Preserve their bytes and author
   marks. Telegram file IDs are specific to a bot: upload originals using the
   new bot instead of transferring IDs from the old configuration.
+- Assign a separate UX reviewer when changing Telegram buttons or multi-step
+  flows. Review all parent/back/cancel routes, retained input, number of actions
+  per screen, and whether the next action matches the user's task. Keep concrete
+  change requests and acceptance criteria in `docs/ux-review-*.md`, report them
+  to the lead, and distinguish proposed work from implemented and tested work.
+  Do not send proposals to external people or silently change business policy.
 - Never execute upstream deployment scripts or copy production databases,
   credentials, logs, notebooks with participant data, or nonpublic capability links
   from operational configuration. Public upstream UI references stay in the pinned

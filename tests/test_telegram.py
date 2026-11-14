@@ -640,6 +640,27 @@ def test_public_team_photo_and_cancel(interaction):
     run(scenario())
 
 
+def test_club_edit_continues_to_next_field_and_cancel_returns_to_editor(interaction):
+    async def scenario():
+        i = interaction
+        await i.send(callback="edit:cinema:name")
+        await i.send(text="Новый киноклуб")
+        await i.send(callback=i.bot.action("save:"))
+        assert i.bot.action("edit:") == "edit:cinema:description:seq"
+        await i.send(callback=i.bot.action("edit:"))
+        await i.send(text="x" * 3001)
+        assert i.db.states[101].state == "club_profile_edit"
+        assert i.bot.action("edit:") == "edit:cinema:name:seq"
+        await i.send(text="Новое описание клуба")
+        await i.send(callback=i.bot.action("cancel:"))
+        assert i.db.club["name"] == "Новый киноклуб"
+        assert i.db.club["description"] == ""
+        assert i.bot.action("edit:") == "edit:cinema:name"
+        assert i.bot.action("manageclub:") == "manageclub:cinema"
+
+    run(scenario())
+
+
 def test_organizers_require_numeric_id_and_leader_on_every_action(interaction):
     async def scenario():
         i = interaction

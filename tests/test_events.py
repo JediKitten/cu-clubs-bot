@@ -398,11 +398,12 @@ def test_event_ui_wizard_collaboration_and_registration_buttons_fit_telegram(ses
         await route(raw="Показ киноклуба")
         await route(raw="Смотрим фильм и обсуждаем.")
         screen = await route(raw="Важные инструкции после записи")
-        assert "Когда начнется" in screen.text
+        assert "Начало · дата" in screen.text
         start = datetime.now(UTC) + timedelta(days=2)
         await route(raw=start.strftime("%d.%m.%Y %H:%M"))
         await route(raw=(start + timedelta(hours=2)).strftime("%d.%m.%Y %H:%M"))
-        await route(f"evchoice:{state.payload['token']}:default")
+        await route(f"evtime:{state.payload['token']}:start")
+        await route(f"evtime:{state.payload['token']}:save")
         await route(f"evchoice:{state.payload['token']}:campus")
         await route(raw="305")
         await route(f"evchoice:{state.payload['token']}:skip")

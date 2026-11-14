@@ -18,7 +18,7 @@ from cu_clubs.calendar_ui import handle_calendar
 from cu_clubs.event_ui import handle_events
 from cu_clubs.identity_ui import handle_identity
 from cu_clubs.models import Conversation, TelegramUpdate
-from cu_clubs.screens import ScreenManager
+from cu_clubs.screens import ScreenManager, UIScreen
 from cu_clubs.services import ClubNotFound, ClubService, PermissionDenied, ValidationError
 from cu_clubs.telegram_files import attendance_upload
 from cu_clubs.template_ui import handle_templates
@@ -143,9 +143,47 @@ def _callback_banner(data: str) -> str | None:
 
 def _confirmation(action: str, state: Conversation) -> InlineKeyboardMarkup:
     token = state.payload["token"]
+    if action == "save":
+        return keyboard(
+            [(legacy.text("confirm"), f"save:{token}")],
+            [
+                (
+                    "Назад",
+                    f"edit:{state.payload['club']}:{state.payload['field']}"
+                    + (":seq" if state.payload.get("sequence") else ""),
+                )
+            ],
+            [("Отменить изменение", f"cancel:{token}")],
+        )
     return keyboard(
         [(legacy.text("confirm"), f"{action}:{token}"), (legacy.text("cancel"), f"cancel:{token}")]
     )
+
+
+def _club_edit_hint(field):
+    return {
+        "public_team": "Пришли список: один человек на строку, «Имя — роль». "
+        "Это публичное описание, оно не выдаёт права. Для очистки — «Удалить».",
+        "name": legacy.text("input_club_name"),
+        "description": legacy.text("input_club_description"),
+        "cover": legacy.text("input_club_avatar") + "\n\nДля очистки — «Удалить».",
+        "channel": legacy.text("input_club_link")
+        + "\n\nМожно указать @username; для очистки — «Удалить».",
+    }[field]
+
+
+def _club_edit_navigation(payload):
+    public_id, field = payload["club"], payload["field"]
+    index = list(FIELDS).index(field)
+    back = (
+        f"edit:{public_id}:{list(FIELDS)[index - 1]}:seq"
+        if payload.get("sequence") and index
+        else f"editmenu:{public_id}"
+    )
+    rows = [[("Назад", back)]]
+    if payload.get("sequence") and index:
+        rows.append([("Выбрать другое поле", f"editmenu:{public_id}")])
+    return keyboard(*rows)
 
 
 def parse_value(field: str, message: Message) -> Any:
@@ -460,16 +498,21 @@ def build_dispatcher(sessionmaker: Any, settings: Any) -> Dispatcher:
                     banner_role = "club-owner"
                     payload = state.payload
                     club = await _profile_access(service, user.id, payload["club"])
-                    value = parse_value(payload["field"], message)
-                    preview = dict(club)
-                    preview[payload["field"]] = value
-                    state.state = "club_profile_preview"
-                    state.payload = {**payload, "value": value}
-                    text, photo = (
-                        "<b>Предпросмотр</b>\n\n" + card_text(preview),
-                        preview.get("cover"),
-                    )
-                    markup = _confirmation("save", state)
+                    try:
+                        value = parse_value(payload["field"], message)
+                    except ValidationError as error:
+                        text = escape(str(error)) + "\n\n" + _club_edit_hint(payload["field"])
+                        markup = _club_edit_navigation(payload)
+                    else:
+                        preview = dict(club)
+                        preview[payload["field"]] = value
+                        state.state = "club_profile_preview"
+                        state.payload = {**payload, "value": value}
+                        text, photo = (
+                            "<b>Предпросмотр</b>\n\n" + card_text(preview),
+                            preview.get("cover"),
+                        )
+                        markup = _confirmation("save", state)
                 elif message and state.state == "organizer_add":
                     banner_role = "club-owner"
                     public_id = state.payload["club"]
@@ -495,16 +538,33 @@ def build_dispatcher(sessionmaker: Any, settings: Any) -> Dispatcher:
                         markup = _confirmation(save_action, state)
                         banner_role = "club-owner"
                     else:
-                        text, markup = await _menu(service, user.id)
-                        banner_role = "menu"
+                        saved = await session.get(UIScreen, (bot.id, user.id))
+                        if saved:
+                            text = saved.text
+                            markup = (
+                                InlineKeyboardMarkup.model_validate(saved.base_markup)
+                                if saved.base_markup
+                                else None
+                            )
+                            photo = saved.photo_file_id if saved.kind == "photo" else None
+                            banner_role = saved.banner_role
+                        else:
+                            text, markup = await _menu(service, user.id)
+                            banner_role = "menu"
                 elif data.startswith("cancel:") and data != f"cancel:{state.payload.get('token')}":
                     text = "Эта кнопка относится к другому изменению. Продолжи текущий диалог."
                 elif data in {"menu", "cancel"} or data.startswith("cancel:"):
                     public_id = state.payload.get("club")
+                    previous_state = state.state
                     _reset(state)
                     if data.startswith("cancel") and public_id:
-                        text = "Изменение отменено."
-                        markup = keyboard([("Управление клубом", f"manageclub:{public_id}")])
+                        if previous_state.startswith("club_profile"):
+                            text, markup = await _edit_menu(service, user.id, public_id)
+                        elif previous_state.startswith("organizer"):
+                            text, markup = await _organizers(service, user.id, public_id)
+                        else:
+                            text = "Изменение отменено."
+                            markup = keyboard([("Назад", f"manageclub:{public_id}")])
                     else:
                         text, markup = await _menu(service, user.id)
                 elif data == "clubs":
@@ -586,9 +646,12 @@ def build_dispatcher(sessionmaker: Any, settings: Any) -> Dispatcher:
                     rows.append([("В меню", "menu")])
                     markup = keyboard(*rows)
                 elif data.startswith("editmenu:"):
+                    _reset(state)
                     text, markup = await _edit_menu(service, user.id, data.split(":", 1)[1])
                 elif data.startswith("edit:"):
-                    _, public_id, field = data.split(":")
+                    parts = data.split(":")
+                    _, public_id, field = parts[:3]
+                    sequence = len(parts) == 4 and parts[3] == "seq"
                     club = await _profile_access(service, user.id, public_id)
                     if field not in FIELDS:
                         raise ValidationError("Неизвестное поле карточки.")
@@ -598,18 +661,10 @@ def build_dispatcher(sessionmaker: Any, settings: Any) -> Dispatcher:
                         "field": field,
                         "version": club["version"],
                         "token": uuid4().hex,
+                        "sequence": sequence,
                     }
-                    hints = {
-                        "public_team": "Пришли список: один человек на строку, «Имя — роль». "
-                        "Это публичное описание, оно не выдаёт права. Для очистки — «Удалить».",
-                        "name": legacy.text("input_club_name"),
-                        "description": legacy.text("input_club_description"),
-                        "cover": legacy.text("input_club_avatar") + "\n\nДля очистки — «Удалить».",
-                        "channel": legacy.text("input_club_link")
-                        + ("\n\nМожно указать @username; для очистки — «Удалить»."),
-                    }
-                    text = hints.get(field, f"Пришли новое значение: {FIELDS[field].lower()}.")
-                    markup = keyboard([(legacy.text("cancel"), f"cancel:{state.payload['token']}")])
+                    text = _club_edit_hint(field)
+                    markup = _club_edit_navigation(state.payload)
                 elif (
                     data == f"save:{state.payload.get('token')}"
                     and state.state == "club_profile_preview"
@@ -633,7 +688,24 @@ def build_dispatcher(sessionmaker: Any, settings: Any) -> Dispatcher:
                     )
                     _reset(state)
                     text, photo = success + "\n\n" + card_text(club), club.get("cover")
-                    markup = keyboard([(legacy.text("profile"), f"editmenu:{club['public_id']}")])
+                    fields = list(FIELDS)
+                    index = fields.index(payload["field"]) + 1
+                    rows = []
+                    if index < len(fields):
+                        next_field = fields[index]
+                        rows.append(
+                            [
+                                (
+                                    f"Далее: {FIELDS[next_field]}",
+                                    f"edit:{club['public_id']}:{next_field}:seq",
+                                )
+                            ]
+                        )
+                    rows += [
+                        [("Изменить другое поле", f"editmenu:{club['public_id']}")],
+                        [("Завершить редактирование", f"manageclub:{club['public_id']}")],
+                    ]
+                    markup = keyboard(*rows)
                 elif data.startswith("organizers:"):
                     text, markup = await _organizers(service, user.id, data.split(":", 1)[1])
                 elif data.startswith("orgadd:"):

@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 
 from aiogram.types import Message
 
+from cu_clubs import event_schedule_ui as schedule
 from cu_clubs import legacy
 from cu_clubs.events import EventService
 from cu_clubs.models import Conversation
@@ -62,6 +63,18 @@ LABELS = {
     "needs_microphones": "Микрофоны",
     "visibility": "Доступность",
 }
+EDIT_GROUPS = {
+    "text": ("Название и описание", ("title", "description", "post_registration_text")),
+    "time": ("Дата и время", ("starts_at", "ends_at", "registration_deadline")),
+    "place": ("Место проведения", ("venue_type", "room", "venue_details")),
+    "people": ("Участники и доступ", ("capacity", "expected_attendance", "visibility")),
+    "tech": ("Техника", ("needs_talk", "needs_microphones")),
+}
+
+
+def _edit_route(public_id, field):
+    group = next(key for key, (_, fields) in EDIT_GROUPS.items() if field in fields)
+    return f"evedit:{public_id}:{group}"
 
 
 def _date_text(value: str | None) -> str:
@@ -187,6 +200,8 @@ def _prompt(state, event) -> Screen:
     field = state.payload["field"]
     token = state.payload["token"]
     rows = []
+    if state.payload.get("wizard") and FIELDS.index(field):
+        rows.append([("Назад", f"evprev:{token}")])
     hints = {
         "title": legacy.text("input_event_name"),
         "description": legacy.text("input_event_description"),
@@ -240,8 +255,12 @@ def _prompt(state, event) -> Screen:
     rows.append(
         [
             (
-                "Выйти в черновики" if event["status"] == "draft" else legacy.text("back"),
-                f"event:{event['public_id']}",
+                "Сохранить черновик и выйти"
+                if state.payload.get("wizard")
+                else "Выбрать другое поле",
+                f"event:{event['public_id']}"
+                if state.payload.get("wizard")
+                else _edit_route(event["public_id"], field),
             )
         ]
     )
@@ -308,7 +327,16 @@ async def _edit_value(service, user_id, state, raw):
         except OverflowError:
             raise ValidationError("Дата окончания выходит за допустимый диапазон.") from None
     event = await method(user_id, event["public_id"], changes, payload["version"])
+    if payload.get("schedule_draft"):
+        payload = {
+            **payload,
+            "schedule_draft": {**payload["schedule_draft"], "version": event["version"]},
+        }
+        state.payload = payload
     if payload.get("wizard") and FIELDS.index(field) < len(FIELDS) - 1:
+        next_field = FIELDS[FIELDS.index(field) + 1]
+        if next_field in schedule.TIME_FIELDS:
+            return schedule.begin(state, event, next_field, wizard=True)
         state.payload = {
             **payload,
             "field": FIELDS[FIELDS.index(field) + 1],
@@ -325,8 +353,24 @@ async def handle_events(
 ) -> Screen | None:
     service = EventService(session)
     data = {"future:events": "events", "future:mine": "my_events"}.get(data, data)
+    if state.state == "event_edit" and state.payload.get("field") in schedule.TIME_FIELDS:
+        event = await service.get_event(state.payload["event"], user_id)
+        screen = schedule.begin(
+            state, event, state.payload["field"], wizard=state.payload.get("wizard", False)
+        )
+        if data.startswith("evchoice:"):
+            return screen
+    scheduled = await schedule.handle(service, user_id, state, message, data)
+    if scheduled is not None:
+        return scheduled
     if message and state.state == "event_edit":
-        return await _edit_value(service, user_id, state, (message.text or "").strip())
+        try:
+            return await _edit_value(service, user_id, state, (message.text or "").strip())
+        except ValidationError as error:
+            event = await service.get_event(state.payload["event"], user_id)
+            screen = _prompt(state, event)
+            screen.text = escape(str(error)) + "\n\n" + screen.text
+            return screen
     if message and state.state == "event_template_name":
         template = await service.save_template(user_id, state.payload["event"], message.text or "")
         event_id = state.payload["event"]
@@ -337,6 +381,20 @@ async def handle_events(
         )
     if not data:
         return None
+    if data.startswith("evprev:"):
+        if state.state != "event_edit" or data.split(":")[1] != state.payload.get("token"):
+            raise ValidationError("Кнопка устарела. Открой актуальную карточку.")
+        event = await service.get_event(state.payload["event"], user_id)
+        previous = FIELDS[max(0, FIELDS.index(state.payload["field"]) - 1)]
+        if previous in schedule.TIME_FIELDS:
+            return schedule.begin(state, event, previous, wizard=True)
+        state.payload = {
+            **state.payload,
+            "field": previous,
+            "version": event["version"],
+            "token": uuid4().hex[:10],
+        }
+        return _prompt(state, event)
     if data.startswith("evchoice:"):
         _, token, value = data.split(":", 2)
         if state.state != "event_edit" or token != state.payload.get("token"):
@@ -430,18 +488,30 @@ async def handle_events(
             role="club-owner",
         )
     if data.startswith("evedit:"):
-        event = await service.get_event(data.split(":")[1], user_id)
+        parts = data.split(":")
+        event = await service.get_event(parts[1], user_id)
         if not event["can_manage"]:
             raise PermissionDenied("Нет права редактировать встречу.")
+        _reset(state)
+        if len(parts) == 2:
+            rows = [
+                [(title, f"evedit:{event['public_id']}:{key}")]
+                for key, (title, _) in EDIT_GROUPS.items()
+            ]
+            rows.append([("Назад", f"event:{event['public_id']}")])
+            return _screen("Что изменить во встрече?", rows, role="club-owner")
+        if parts[2] not in EDIT_GROUPS:
+            raise ValidationError("Раздел редактирования не найден.")
+        title, fields = EDIT_GROUPS[parts[2]]
         rows = [
             [(LABELS[field], f"evf:{event['public_id']}:{FIELD_CODES[field]}")]
-            for field in FIELDS
+            for field in fields
             if event["status"] != "published"
             or event["can_reschedule"]
             or field not in {"starts_at", "ends_at", "registration_deadline"}
         ]
-        rows.append([(legacy.text("back"), f"event:{event['public_id']}")])
-        return _screen("Выбери поле встречи.", rows, role="club-owner")
+        rows.append([(legacy.text("back"), f"evedit:{event['public_id']}")])
+        return _screen(title + " · выбери поле.", rows, role="club-owner")
     if data.startswith("evf:"):
         _, public_id, code = data.split(":")
         field = next((k for k, v in FIELD_CODES.items() if v == code), None)
@@ -450,6 +520,8 @@ async def handle_events(
         event = await service.get_event(public_id, user_id)
         if not event["can_manage"]:
             raise PermissionDenied("Нет права редактировать встречу.")
+        if field in schedule.TIME_FIELDS:
+            return schedule.begin(state, event, field)
         state.state, state.payload = (
             "event_edit",
             {

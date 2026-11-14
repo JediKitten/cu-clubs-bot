@@ -80,6 +80,30 @@ def test_club_template_to_date_only_preserves_clock_and_manual_duration(sessions
                 if button.text == label
             )
 
+        async def finish_schedule():
+            for _ in range(7):
+                buttons = [
+                    b.callback_data
+                    for row in bot.sent[-1].reply_markup.inline_keyboard
+                    for b in row
+                    if b.callback_data
+                ]
+                choice = next(
+                    (
+                        b
+                        for b in buttons
+                        if b.startswith("evtime:") and b.endswith((":save", ":start"))
+                    ),
+                    None,
+                )
+                choice = choice or next(
+                    b for b in buttons if b.startswith("evtime:") and b.endswith(":keep")
+                )
+                await step(data=choice)
+                if choice.endswith(":save"):
+                    return
+            raise AssertionError("Schedule did not reach confirmation")
+
         try:
             await step(data="manageclub:cinema")
             await step(data=action("Шаблоны"))
@@ -95,12 +119,14 @@ def test_club_template_to_date_only_preserves_clock_and_manual_duration(sessions
             async with sessions() as session:
                 assert await session.scalar(select(func.count()).select_from(Event)) == 2
             await step(data=date_action)
-            assert "23:30" in text_of(bot.sent[-1])
+            assert "Начало · дата" in text_of(bot.sent[-1])
             async with sessions() as session:
                 first_pointer = (await session.get(UIScreen, (bot.id, LEADER))).message_id
             # A process restart does not lose the selected draft or input field.
             dispatcher = build_dispatcher(sessions, settings)
             await step(text=f"31.12.{year}")
+            assert "23:30" in text_of(bot.sent[-1])
+            await finish_schedule()
             async with sessions() as session:
                 event = await EventService(session).get_event(event_id, LEADER)
                 assert datetime.fromisoformat(event["starts_at"]).astimezone(MOSCOW) == datetime(
@@ -113,8 +139,10 @@ def test_club_template_to_date_only_preserves_clock_and_manual_duration(sessions
                 assert (await session.get(UIScreen, (bot.id, LEADER))).message_id == first_pointer
             await step(data=f"evf:{event_id}:end")
             await step(text=f"01.01.{year + 1} 03:00")
+            await finish_schedule()
             await step(data=f"evf:{event_id}:start")
             await step(text=f"02.01.{year + 1}")
+            await finish_schedule()
             async with sessions() as session:
                 event = await EventService(session).get_event(event_id, LEADER)
                 assert datetime.fromisoformat(event["ends_at"]).astimezone(MOSCOW) == datetime(
@@ -125,6 +153,7 @@ def test_club_template_to_date_only_preserves_clock_and_manual_duration(sessions
                 assert original["room"] == "305"
             await step(data=f"evf:{event_id}:start")
             await step(text="31.12.9999")
+            await step(data=action("Оставить 23:30"))
             assert "допустимый диапазон" in text_of(bot.sent[-1])
             async with sessions() as session:
                 assert (await EventService(session).get_event(event_id, LEADER))[

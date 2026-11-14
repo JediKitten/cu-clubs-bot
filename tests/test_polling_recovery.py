@@ -102,3 +102,38 @@ def test_legacy_notification_is_removed_on_url_navigation(runtime_database_url):
 def test_back_button_override_keeps_navigation_arrows():
     markup = keyboard([(legacy.text("back"), "menu"), ("←", "page:previous")])
     assert [button.text for button in markup.inline_keyboard[0]] == ["Назад", "←"]
+
+
+def test_unexpected_text_keeps_the_active_screen(runtime_database_url):
+    from cu_clubs.telegram import build_dispatcher
+
+    async def scenario(sessions, settings):
+        bot = FakeBot()
+        try:
+            await ScreenManager(sessions, bot).show(
+                LEADER, "Профиль клуба", keyboard([("Редактировать", "editmenu:cinema")])
+            )
+            dispatcher = build_dispatcher(sessions, settings)
+            await dispatcher.feed_update(
+                bot,
+                Update.model_validate(
+                    {
+                        "update_id": 777,
+                        "message": {
+                            "message_id": 888,
+                            "date": 1700000000,
+                            "chat": {"id": LEADER, "type": "private"},
+                            "from": {"id": LEADER, "is_bot": False, "first_name": "Tester"},
+                            "text": "Случайный текст",
+                        },
+                    }
+                ),
+            )
+            assert bot.sent[-1].text == "Профиль клуба"
+            assert (
+                bot.sent[-1].reply_markup.inline_keyboard[0][0].callback_data == "editmenu:cinema"
+            )
+        finally:
+            await bot.session.close()
+
+    run(runtime_database_url, scenario)
