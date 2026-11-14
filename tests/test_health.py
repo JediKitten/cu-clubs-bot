@@ -22,7 +22,16 @@ def test_liveness_and_openapi_work_without_database() -> None:
         assert client.get("/health/live").json() == {"status": "alive"}
         response = client.get("/openapi.json")
         assert response.status_code == 200
-        assert set(response.json()["paths"]) == {"/health/live", "/health/ready"}
+        paths = response.json()["paths"]
+        assert {
+            "/health/live",
+            "/health/ready",
+            "/api/v1/events",
+            "/api/v1/links",
+            "/api/v1/changes",
+        } <= set(paths)
+        assert "/telegram/webhook" not in paths
+        assert paths["/api/v1/events"]["get"]["security"]
 
 
 def test_readiness_checks_database_and_hides_connection_details(caplog) -> None:

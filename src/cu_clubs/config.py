@@ -60,6 +60,9 @@ class Settings(BaseSettings):
     calendar_sync_interval_seconds: int = Field(default=60, ge=15, le=3600)
     calendar_sync_batch_size: int = Field(default=10, ge=1, le=50)
     calendar_digest_color: str = Field(default="#FF00FF", pattern=r"^#[0-9A-Fa-f]{6}$")
+    api_enabled: bool = True
+    api_rate_limit_per_minute: int = Field(default=120, ge=1, le=10000)
+    api_grant_ttl_days: int = Field(default=90, ge=1, le=365)
 
     # Daily backup time is interpreted in the configured timezone.
     backup_recipient_telegram_id: PositiveInt | None = None

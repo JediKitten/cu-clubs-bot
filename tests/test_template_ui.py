@@ -95,7 +95,19 @@ def test_template_card_edit_and_rename_require_confirm_and_leave_source_unchange
         assert "23:30 по Москве" in card.text and "120 мин." in card.text
         assert "2030" not in card.text and "305" not in card.text
         edit = await step(sessions, action(card, "tmedit:"))
-        await step(sessions, action(edit, "tmfield:").replace(":name", ":desc"))
+        assert (
+            len(
+                [
+                    button
+                    for row in edit.markup.inline_keyboard
+                    for button in row
+                    if button.callback_data.startswith("tmg:")
+                ]
+            )
+            == 4
+        )
+        group = await step(sessions, action(edit, "tmg:"))
+        await step(sessions, action(group, "tmfield:").replace(":name", ":desc"))
         preview = await step(sessions, raw="Новое <b>описание</b>")
         assert "&lt;b&gt;описание&lt;/b&gt;" in preview.text
         assert (await read_template(sessions, item["public_id"]))["fields"]["description"] == event[
@@ -113,6 +125,108 @@ def test_template_card_edit_and_rename_require_confirm_and_leave_source_unchange
             unchanged = await EventService(session).get_event(event["public_id"], LEADER)
             assert unchanged["description"] == event["description"]
             assert unchanged["version"] == event["version"]
+
+    asyncio.run(scenario())
+
+
+def test_template_editor_group_back_preview_back_cancel_and_legacy_direct_field(sessions):
+    async def scenario():
+        await seed(sessions)
+        event = await source(sessions)
+        item = await template(sessions, event)
+        card = await step(sessions, f"tmpl:{item['public_id']}")
+        groups = await step(sessions, action(card, "tmedit:"))
+        group_buttons = [
+            button
+            for row in groups.markup.inline_keyboard
+            for button in row
+            if button.callback_data.startswith("tmg:")
+        ]
+        assert len(group_buttons) == 4
+        counts = []
+        group_screens = []
+        for group_button in group_buttons:
+            group_screen = await step(sessions, group_button.callback_data)
+            group_screens.append(group_screen)
+            counts.append(
+                sum(
+                    button.callback_data.startswith("tmfield:")
+                    for row in group_screen.markup.inline_keyboard
+                    for button in row
+                )
+            )
+        assert max(counts) <= 4
+        back_to_groups = await step(sessions, action(group_screens[0], "tmedit:"))
+        assert "Изменить шаблон" in back_to_groups.text
+
+        # Old deep links still open the matching field prompt.
+        prompt = await step(sessions, f"tmfield:{item['public_id']}:clock")
+        assert "19:30" in prompt.text
+        assert action(prompt, "tmg:").endswith(":1")
+        preview = await step(sessions, raw="19.30")
+        assert "19:30 по Москве" in preview.text
+        resumed = await step(sessions, action(preview, "tmback:"))
+        assert "Текущее значение: 19.30" in resumed.text
+        assert resumed.markup.inline_keyboard[-2][0].callback_data.endswith(":1")
+        with pytest.raises(ValidationError, match="Не распознал время"):
+            await step(sessions, raw="25:80")
+        async with sessions() as session:
+            state = await session.get(Conversation, LEADER)
+            assert state.state == "template_edit"
+            assert state.payload["field"] == "start_time"
+            assert state.payload["group"] == 1
+        # Cancel from field input discards the draft and returns to its card.
+        returned = await step(sessions, action(resumed, "tmpl:"))
+        assert "Шаблон:" in returned.text
+        assert (await read_template(sessions, item["public_id"]))["fields"]["start_time"] == "23:30"
+
+    asyncio.run(scenario())
+
+
+def test_template_clock_accepts_flexible_forms_and_normalizes_to_hhmm(sessions):
+    async def scenario():
+        await seed(sessions)
+        event = await source(sessions)
+        item = await template(sessions, event)
+        for raw, expected in (("19.30", "19:30"), ("1930", "19:30"), ("19", "19:00")):
+            await step(sessions, f"tmfield:{item['public_id']}:clock")
+            preview = await step(sessions, raw=raw)
+            assert f"{expected} по Москве" in preview.text
+            card = await step(sessions, action(preview, "tmsave:"))
+            assert f"{expected} по Москве" in card.text
+
+    asyncio.run(scenario())
+
+
+def test_preview_back_rotates_template_token_and_rejects_old_field_and_save_callbacks(sessions):
+    async def scenario():
+        await seed(sessions)
+        event = await source(sessions)
+        item = await template(sessions, event)
+        prompt = await step(sessions, f"tmfield:{item['public_id']}:clock")
+        async with sessions() as session:
+            state = await session.get(Conversation, LEADER)
+            old_token = state.payload["token"]
+        old_choice = action(prompt, "tmchoice:")
+        first_preview = await step(sessions, raw="19.30")
+        old_save = action(first_preview, "tmsave:")
+        returned = await step(sessions, action(first_preview, "tmback:"))
+        assert "Текущее значение: 19.30" in returned.text
+        async with sessions() as session:
+            state = await session.get(Conversation, LEADER)
+            new_token = state.payload["token"]
+        assert new_token != old_token
+        with pytest.raises(ValidationError, match="устарела"):
+            await step(sessions, old_save)
+
+        second_preview = await step(sessions, raw="20")
+        with pytest.raises(ValidationError, match="устарела"):
+            await step(sessions, old_choice)
+        with pytest.raises(ValidationError, match="устарела"):
+            await step(sessions, old_save)
+        assert "20:00 по Москве" in second_preview.text
+        await step(sessions, action(second_preview, "tmsave:"))
+        assert (await read_template(sessions, item["public_id"]))["fields"]["start_time"] == "20:00"
 
     asyncio.run(scenario())
 

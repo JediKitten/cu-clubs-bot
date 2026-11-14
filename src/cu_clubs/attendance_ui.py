@@ -1,5 +1,6 @@
 """Private attendance dialogues; every confirmation rechecks domain permissions."""
 
+from copy import deepcopy
 from html import escape
 from uuid import uuid4
 
@@ -26,17 +27,87 @@ def _confirm(state, name, nonce):
         raise ValidationError("Кнопка устарела. Открой актуальный экран")
 
 
-def _marked(result):
-    return _screen(
-        "Посещение отмечено" if result["created"] else "Посещение уже отмечено",
+def _marked(result, *, organizer=False):
+    rows = [
         [("Открыть встречу", f"event:{result['event']}:link")],
         [("В меню", "menu")],
+    ]
+    if organizer:
+        rows = [
+            [("К посещаемости", f"at:{result['event']}")],
+            [("К встрече", f"event:{result['event']}:link")],
+            [("Отметить ещё", f"atmanual:{result['event']}")],
+        ]
+    return _screen(
+        "Посещение отмечено" if result["created"] else "Посещение уже отмечено",
+        *rows,
     )
 
 
-async def _import_screen(service, actor, state, batch_id):
+def _snapshot(state):
+    return state.state, deepcopy(state.payload)
+
+
+def _restore(state, snapshot):
+    state.state, state.payload = snapshot
+
+
+def _with_notice(screen, notice):
+    if notice:
+        screen.text = escape(notice) + "\n\n" + screen.text
+    return screen
+
+
+def _is_stale(error):
+    return any(word in str(error).lower() for word in ("устар", "изменил", "верси"))
+
+
+def _manual_name_screen(state, notice=""):
+    text = legacy.text("fio_request")
+    if state.payload.get("name"):
+        text += "\nТекущее ФИО: " + escape(state.payload["name"])
+    rows = [[(legacy.text("cancel"), f"at:{state.payload['event']}")]]
+    return _with_notice(_screen(text, *rows), notice)
+
+
+def _manual_login_screen(state, notice=""):
+    text = "Введи логин студента в Тайме"
+    if state.payload.get("name"):
+        text += "\nФИО: " + escape(state.payload["name"])
+    if state.payload.get("login"):
+        text += "\nТекущий логин: " + escape(state.payload["login"])
+    return _with_notice(
+        _screen(
+            text,
+            [("Назад", f"atmanualback:{state.payload['nonce']}:name")],
+            [(legacy.text("cancel"), f"at:{state.payload['event']}")],
+        ),
+        notice,
+    )
+
+
+def _manual_confirm_screen(state, notice=""):
+    return _with_notice(
+        _screen(
+            f"{escape(state.payload['name'])}\n{escape(state.payload['login'])}\n"
+            "Отметить посещение?",
+            [(legacy.text("confirm"), f"atmanualconfirm:{state.payload['nonce']}")],
+            [("Назад", f"atmanualback:{state.payload['nonce']}:login")],
+            [(legacy.text("cancel"), f"at:{state.payload['event']}")],
+        ),
+        notice,
+    )
+
+
+async def _import_screen(service, actor, state, batch_id, notice=""):
     preview = await service.import_preview(actor, batch_id)
-    _state(state, "attendance_import", batch=batch_id, version=preview["version"])
+    _state(
+        state,
+        "attendance_import",
+        batch=batch_id,
+        version=preview["version"],
+        event=preview["event"],
+    )
     nonce = state.payload["nonce"]
     lines = [
         f"Новых {preview['new']} · уже отмечены {preview['existing']} · "
@@ -57,7 +128,44 @@ async def _import_screen(service, actor, state, batch_id):
     if preview["new"] or preview["existing"]:
         rows.append([(f"Подтвердить {preview['new']}", f"atimportconfirm:{nonce}")])
     rows.append([("Назад", f"at:{preview['event']}")])
-    return _screen("\n".join(lines), *rows)
+    return _with_notice(_screen("\n".join(lines), *rows), notice)
+
+
+def _guest_name_screen(state, notice=""):
+    text = legacy.text("fio_request")
+    if state.payload.get("name"):
+        text += "\nТекущее ФИО: " + escape(state.payload["name"])
+    return _with_notice(
+        _screen(
+            text,
+            [("Назад", f"aqi:{state.payload['qr_id']}")],
+            [(legacy.text("cancel"), f"aqi:{state.payload['qr_id']}")],
+        ),
+        notice,
+    )
+
+
+def _guest_confirm_screen(state, notice=""):
+    return _with_notice(
+        _screen(
+            f"Отметить посещение: {escape(state.payload['name'])}?",
+            [(legacy.text("confirm"), f"atguestconfirm:{state.payload['nonce']}")],
+            [("Назад", f"atguestback:{state.payload['nonce']}")],
+            [(legacy.text("cancel"), f"aqi:{state.payload['qr_id']}")],
+        ),
+        notice,
+    )
+
+
+def _upload_screen(state, notice=""):
+    return _with_notice(
+        _screen(
+            "Пришли .xlsx: ФИО, Логин в Тайме, Telegram-тег (необязательно). "
+            "Перед записью будет предпросмотр.",
+            [(legacy.text("cancel"), f"at:{state.payload['event']}")],
+        ),
+        notice,
+    )
 
 
 async def handle_attendance(session, user_id, state, message, data, settings, *, upload=None):
@@ -103,16 +211,38 @@ async def handle_attendance(session, user_id, state, message, data, settings, *,
         )
     if data.startswith("atself:"):
         _confirm(state, "attendance_self", data.split(":")[1])
-        raw = await service.resume_raw(user_id, state.payload["qr_id"])
-        result = await service.mark_event_qr(user_id, raw)
+        snapshot = _snapshot(state)
+        try:
+            async with session.begin_nested():
+                raw = await service.resume_raw(user_id, state.payload["qr_id"])
+                result = await service.mark_event_qr(user_id, raw)
+        except ValidationError as error:
+            _restore(state, snapshot)
+            if _is_stale(error):
+                raise
+            return _with_notice(
+                _screen(
+                    "Посещение нельзя отметить по этому QR.",
+                    [("Назад к QR", f"aqi:{state.payload['qr_id']}")],
+                ),
+                str(error),
+            )
         state.state, state.payload = "idle", {}
         return _marked(result)
     if data.startswith("atguest:"):
         _confirm(state, "attendance_self", data.split(":")[1])
-        state.state = "attendance_guest_name"
-        return _screen(legacy.text("fio_request"), [(legacy.text("cancel"), "menu")])
+        _state(
+            state,
+            "attendance_guest_name",
+            qr_id=state.payload["qr_id"],
+            event=state.payload["event"],
+        )
+        return _guest_name_screen(state)
     if message and state.state == "attendance_guest_name":
-        name = normalize_name(message.text or "")
+        try:
+            name = normalize_name(message.text or "")
+        except ValidationError as error:
+            return _guest_name_screen(state, str(error))
         _state(
             state,
             "attendance_guest_confirm",
@@ -120,24 +250,47 @@ async def handle_attendance(session, user_id, state, message, data, settings, *,
             event=state.payload["event"],
             name=name,
         )
-        return _screen(
-            f"Отметить посещение: {escape(name)}?",
-            [(legacy.text("confirm"), f"atguestconfirm:{state.payload['nonce']}")],
-            [(legacy.text("cancel"), "menu")],
-        )
-    if data.startswith("atguestconfirm:"):
-        _confirm(state, "attendance_guest_confirm", data.split(":")[1])
-        result = await service.register_guest_and_mark(
-            user_id,
-            await service.resume_raw(user_id, state.payload["qr_id"]),
+        return _guest_confirm_screen(state)
+    if data.startswith("atguestback:"):
+        _confirm(state, "attendance_guest_confirm", data.split(":", 1)[1])
+        qr_id, event, name = (
+            state.payload["qr_id"],
+            state.payload["event"],
             state.payload["name"],
         )
+        _state(state, "attendance_guest_name", qr_id=qr_id, event=event, name=name)
+        return _guest_name_screen(state)
+    if data.startswith("atguestconfirm:"):
+        _confirm(state, "attendance_guest_confirm", data.split(":")[1])
+        snapshot = _snapshot(state)
+        try:
+            async with session.begin_nested():
+                result = await service.register_guest_and_mark(
+                    user_id,
+                    await service.resume_raw(user_id, state.payload["qr_id"]),
+                    state.payload["name"],
+                )
+        except ValidationError as error:
+            _restore(state, snapshot)
+            if _is_stale(error):
+                raise
+            return _guest_confirm_screen(state, str(error))
         state.state, state.payload = "idle", {}
         return _marked(result)
     if data.startswith("atpage:"):
         _, nonce, page = data.split(":")
         _confirm(state, "attendance_person_select", nonce)
-        return _person_choices(state, int(page))
+        if not page.isascii() or not page.isdigit():
+            return _with_notice(
+                _person_choices(state, state.payload.get("page", 0)), "Страница недоступна"
+            )
+        page_number = int(page)
+        try:
+            screen = _person_choices(state, page_number)
+        except ValidationError as error:
+            return _with_notice(_person_choices(state, state.payload.get("page", 0)), str(error))
+        state.payload["page"] = page_number
+        return screen
     if data.startswith("atpick:"):
         _, nonce, index = data.split(":")
         _confirm(state, "attendance_person_select", nonce)
@@ -151,26 +304,57 @@ async def handle_attendance(session, user_id, state, message, data, settings, *,
             event=event["public_id"],
             qr_id=state.payload["qr_id"],
             name=state.payload["name"],
+            choices=state.payload["choices"],
+            page=state.payload.get("page", 0),
         )
         return _screen(
             f"{escape(state.payload['name'])}\n{escape(event['title'])}\nОтметить посещение?",
             [(legacy.text("confirm"), f"atperson:{state.payload['nonce']}")],
-            [(legacy.text("cancel"), "menu")],
+            [("Назад", f"atpersonback:{state.payload['nonce']}")],
+            [(legacy.text("cancel"), f"aqi:{state.payload['qr_id']}")],
         )
+    if data.startswith("atpersonback:"):
+        _confirm(state, "attendance_person_confirm", data.split(":", 1)[1])
+        qr_id, choices, name, page = (
+            state.payload["qr_id"],
+            state.payload["choices"],
+            state.payload["name"],
+            state.payload["page"],
+        )
+        _state(
+            state,
+            "attendance_person_select",
+            qr_id=qr_id,
+            choices=choices,
+            name=name,
+            page=page,
+        )
+        return _person_choices(state, page)
     if data.startswith("atperson:"):
         _confirm(state, "attendance_person_confirm", data.split(":")[1])
-        result = await service.mark_personal_qr(
-            user_id,
-            state.payload["event"],
-            await service.resume_raw(user_id, state.payload["qr_id"]),
-        )
+        snapshot = _snapshot(state)
+        try:
+            async with session.begin_nested():
+                result = await service.mark_personal_qr(
+                    user_id,
+                    state.payload["event"],
+                    await service.resume_raw(user_id, state.payload["qr_id"]),
+                )
+        except ValidationError as error:
+            _restore(state, snapshot)
+            if _is_stale(error):
+                raise
+            return _screen(
+                escape(str(error)),
+                [("Назад", f"atpersonback:{state.payload['nonce']}")],
+                [(legacy.text("cancel"), f"aqi:{state.payload['qr_id']}")],
+            )
         state.state, state.payload = "idle", {}
-        return _marked(result)
+        return _marked(result, organizer=True)
     if data.startswith("at:"):
         event = await service._event(data[3:])
         await service._authorize(user_id, event)
-        return _screen(
-            "Посещаемость · " + escape(event.title),
+        rows = [
             [("Показать QR встречи", f"atqr:{event.public_id}")],
             [("Отметить студента вручную", f"atmanual:{event.public_id}")],
             [("Импорт Excel", f"atupload:{event.public_id}")],
@@ -178,6 +362,12 @@ async def handle_attendance(session, user_id, state, message, data, settings, *,
             [("Ведомость", f"atledger:{event.public_id}")],
             [("Отметить проведённой", f"athold:{event.public_id}")],
             [("Назад", f"event:{event.public_id}")],
+        ]
+        if state.state == "attendance_import" and state.payload.get("event") == event.public_id:
+            rows.insert(0, [("К предпросмотру Excel", f"atimportresume:{state.payload['nonce']}")])
+        return _screen(
+            "Посещаемость · " + escape(event.title),
+            *rows,
         )
     if data.startswith("atqr:"):
         qr = await service.event_qr(user_id, data.split(":")[1])
@@ -195,71 +385,134 @@ async def handle_attendance(session, user_id, state, message, data, settings, *,
         event = await service._event(data.split(":")[1])
         await service._authorize(user_id, event)
         _state(state, "attendance_manual_name", event=event.public_id)
-        return _screen(
-            legacy.text("fio_request"), [(legacy.text("cancel"), f"at:{event.public_id}")]
+        return _manual_name_screen(state)
+    if data.startswith("atmanualback:"):
+        _, nonce, target = data.split(":", 2)
+        _confirm(
+            state,
+            "attendance_manual_confirm"
+            if state.state == "attendance_manual_confirm"
+            else "attendance_manual_login",
+            nonce,
         )
+        event, name = state.payload["event"], state.payload["name"]
+        if target == "name":
+            _state(state, "attendance_manual_name", event=event, name=name)
+            return _manual_name_screen(state)
+        if target == "login":
+            login = state.payload.get("login", "")
+            _state(
+                state,
+                "attendance_manual_login",
+                event=event,
+                name=name,
+                login=login,
+            )
+            return _manual_login_screen(state)
+        raise ValidationError("Кнопка устарела. Открой актуальный экран")
     if message and state.state == "attendance_manual_name":
+        try:
+            name = normalize_name(message.text or "")
+        except ValidationError as error:
+            return _manual_name_screen(state, str(error))
         _state(
             state,
             "attendance_manual_login",
             event=state.payload["event"],
-            name=normalize_name(message.text or ""),
+            name=name,
         )
-        return _screen("Введи логин студента в Тайме", [(legacy.text("cancel"), "menu")])
+        return _manual_login_screen(state)
     if message and state.state == "attendance_manual_login":
+        try:
+            login = normalize_login(message.text or "")
+        except ValidationError as error:
+            return _manual_login_screen(state, str(error))
         _state(
             state,
             "attendance_manual_confirm",
             event=state.payload["event"],
             name=state.payload["name"],
-            login=normalize_login(message.text or ""),
+            login=login,
         )
-        return _screen(
-            f"{escape(state.payload['name'])}\n{escape(state.payload['login'])}\n"
-            "Отметить посещение?",
-            [(legacy.text("confirm"), f"atmanualconfirm:{state.payload['nonce']}")],
-            [(legacy.text("cancel"), "menu")],
-        )
+        return _manual_confirm_screen(state)
     if data.startswith("atmanualconfirm:"):
         _confirm(state, "attendance_manual_confirm", data.split(":")[1])
-        result = await service.mark_student(
-            user_id, state.payload["event"], state.payload["name"], state.payload["login"]
-        )
+        snapshot = _snapshot(state)
+        try:
+            async with session.begin_nested():
+                result = await service.mark_student(
+                    user_id,
+                    state.payload["event"],
+                    state.payload["name"],
+                    state.payload["login"],
+                )
+        except ValidationError as error:
+            _restore(state, snapshot)
+            if _is_stale(error):
+                raise
+            return _manual_confirm_screen(state, str(error))
         state.state, state.payload = "idle", {}
-        return _marked(result)
+        return _marked(result, organizer=True)
     if data.startswith("atupload:"):
         event = await service._event(data.split(":")[1])
         await service._authorize(user_id, event)
         _state(state, "attendance_upload", event=event.public_id)
-        return _screen(
-            "Пришли .xlsx: ФИО, Логин в Тайме, Telegram-тег (необязательно). "
-            "Перед записью будет предпросмотр.",
-            [(legacy.text("cancel"), f"at:{event.public_id}")],
-        )
+        return _upload_screen(state)
     if upload is not None:
         if state.state != "attendance_upload":
             raise ValidationError("Сначала выбери встречу и открой «Импорт Excel»")
-        result = await service.preview_import(
-            user_id, state.payload["event"], upload["rows"], upload.get("issues")
-        )
+        snapshot = _snapshot(state)
+        try:
+            async with session.begin_nested():
+                result = await service.preview_import(
+                    user_id, state.payload["event"], upload["rows"], upload.get("issues")
+                )
+        except ValidationError as error:
+            _restore(state, snapshot)
+            return _upload_screen(state, str(error))
         return await _import_screen(service, user_id, state, result["id"])
     if data.startswith("atresolve:"):
         _, nonce, row = data.split(":")
         _confirm(state, "attendance_import", nonce)
-        await service.resolve_import(
-            user_id, state.payload["batch"], [int(row)], state.payload["version"]
-        )
+        if not row.isascii() or not row.isdigit():
+            return await _import_screen(
+                service, user_id, state, state.payload["batch"], "Строка не требует проверки"
+            )
+        snapshot = _snapshot(state)
+        try:
+            async with session.begin_nested():
+                await service.resolve_import(
+                    user_id, state.payload["batch"], [int(row)], state.payload["version"]
+                )
+        except ValidationError as error:
+            _restore(state, snapshot)
+            if _is_stale(error):
+                raise
+            return await _import_screen(service, user_id, state, state.payload["batch"], str(error))
+        return await _import_screen(service, user_id, state, state.payload["batch"])
+    if data.startswith("atimportresume:"):
+        _confirm(state, "attendance_import", data.split(":", 1)[1])
         return await _import_screen(service, user_id, state, state.payload["batch"])
     if data.startswith("atimportconfirm:"):
         _confirm(state, "attendance_import", data.split(":")[1])
-        result = await service.confirm_import(
-            user_id, state.payload["batch"], state.payload["version"]
-        )
+        snapshot = _snapshot(state)
+        try:
+            async with session.begin_nested():
+                result = await service.confirm_import(
+                    user_id, state.payload["batch"], state.payload["version"]
+                )
+        except ValidationError as error:
+            _restore(state, snapshot)
+            if _is_stale(error):
+                raise
+            return await _import_screen(service, user_id, state, state.payload["batch"], str(error))
         state.state, state.payload = "idle", {}
         return _screen(
             f"Добавлено {result['new']} · уже отмечены {result['existing']} · "
             f"пропущено {result['skipped']}",
-            [("Назад", f"at:{result['event']}")],
+            [("К посещаемости", f"at:{result['event']}")],
+            [("К встрече", f"event:{result['event']}:link")],
+            [("Отметить ещё", f"atmanual:{result['event']}")],
         )
     if data.startswith("atledger:"):
         event_id = data.split(":", 1)[1]
@@ -321,5 +574,5 @@ def _person_choices(state, page):
         navigation.append(("→", f"atpage:{token}:{page + 1}"))
     if navigation:
         rows.append(navigation)
-    rows.append([(legacy.text("cancel"), "menu")])
+    rows.append([(legacy.text("cancel"), f"aqi:{state.payload['qr_id']}")])
     return _screen("Выбери встречу · " + escape(state.payload["name"]), *rows)

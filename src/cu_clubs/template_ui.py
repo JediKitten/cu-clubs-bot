@@ -1,12 +1,12 @@
 """Template management uses versioned shared commands and durable confirmations."""
 
-import re
 from datetime import datetime
 from html import escape
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 from cu_clubs import legacy
+from cu_clubs.datetime_input import parse_clock
 from cu_clubs.events import TEMPLATE_FIELDS, EventService, validate_template_fields
 from cu_clubs.services import ValidationError
 from cu_clubs.ui_common import Screen, keyboard
@@ -26,6 +26,42 @@ FIELDS = {
     "visibility": ("Доступность", "visibility"),
 }
 PAGE_SIZE = 15
+FIELD_GROUPS = (
+    ("Текст встречи", ("title", "description", "post_registration_text")),
+    ("Время и площадка", ("start_time", "duration_minutes", "venue_type", "venue_details")),
+    ("Участники и техника", ("capacity", "expected_attendance", "needs_talk")),
+    ("Доступность", ("needs_microphones", "visibility")),
+)
+
+
+def _group_index(field):
+    return next(index for index, (_, fields) in enumerate(FIELD_GROUPS) if field in fields)
+
+
+def _groups(template):
+    return _screen(
+        "Изменить шаблон: " + escape(template["name"]),
+        *[
+            [(name, f"tmg:{template['public_id']}:{index}")]
+            for index, (name, _) in enumerate(FIELD_GROUPS)
+        ],
+        [(legacy.text("back"), f"tmpl:{template['public_id']}")],
+    )
+
+
+def _group(template, index):
+    if index < 0 or index >= len(FIELD_GROUPS):
+        raise ValidationError("Раздел шаблона недоступен.")
+    _, fields = FIELD_GROUPS[index]
+    return _screen(
+        FIELD_GROUPS[index][0],
+        *[
+            [(FIELDS[field][0], f"tmfield:{template['public_id']}:{FIELDS[field][1]}")]
+            for field in fields
+        ],
+        [(legacy.text("back"), f"tmedit:{template['public_id']}")],
+        [(legacy.text("cancel"), f"tmpl:{template['public_id']}")],
+    )
 
 
 def _screen(text, *rows):
@@ -110,7 +146,7 @@ def _prompt(state):
         "capacity": legacy.text("input_max_participants"),
         "expected_attendance": "Сколько людей ожидается? Для отсутствующего значения введи 0.",
         "start_time": (
-            "Введи время начала в формате HH:MM по Москве. Дату укажешь при создании встречи."
+            "Введи время по Москве: 19:30, 19.30, 1930 или 19. Дату укажешь при создании встречи."
         ),
         "duration_minutes": "Укажи длительность встречи в минутах.",
         "venue_type": "Где пройдёт встреча?",
@@ -141,8 +177,14 @@ def _prompt(state):
         "capacity",
     }:
         rows.append([("Убрать", f"tmchoice:{token}:clear")])
+    rows.append(
+        [(legacy.text("back"), f"tmg:{state.payload['template']}:{state.payload['group']}")]
+    )
     rows.append([(legacy.text("cancel"), f"tmpl:{state.payload['template']}")])
-    return _screen(hints[field], *rows)
+    hint = hints[field]
+    if state.payload.get("raw_input") is not None:
+        hint += "\nТекущее значение: " + escape(state.payload["raw_input"])
+    return _screen(hint, *rows)
 
 
 def _parse(field, raw):
@@ -158,8 +200,8 @@ def _parse(field, raw):
         if raw not in {"yes", "no", "Да", "Нет"}:
             raise ValidationError("Выбери «Да» или «Нет».")
         return raw in {"yes", "Да"}
-    if field == "start_time" and not re.fullmatch(r"(?:[01][0-9]|2[0-3]):[0-5][0-9]", raw):
-        raise ValidationError("Введи время в формате HH:MM по Москве, например 18:30.")
+    if field == "start_time":
+        return parse_clock(raw).strftime("%H:%M")
     return raw
 
 
@@ -167,11 +209,19 @@ async def _edit_preview(service, user_id, state, raw):
     current = await _current(service, user_id, state.payload)
     field = state.payload["field"]
     fields = validate_template_fields({field: _parse(field, raw)}, current["fields"])
-    state.state, state.payload = "template_preview", {**state.payload, "value": fields.get(field)}
+    state.state, state.payload = (
+        "template_preview",
+        {
+            **state.payload,
+            "value": fields.get(field),
+            "raw_input": raw,
+        },
+    )
     preview = {**current, "fields": fields}
     return _screen(
         "<b>Предпросмотр изменений</b>\n\n" + template_text(preview),
         [(legacy.text("confirm"), f"tmsave:{state.payload['token']}")],
+        [(legacy.text("back"), f"tmback:{state.payload['token']}")],
         [(legacy.text("cancel"), f"tmpl:{current['public_id']}")],
     )
 
@@ -269,14 +319,15 @@ async def handle_templates(session, user_id, state, message, data, settings):
     if data.startswith("tmedit:"):
         template = await service.get_template(user_id, data.split(":", 1)[1])
         _reset(state)
-        return _screen(
-            "Изменить шаблон: " + escape(template["name"]),
-            *[
-                [(label, f"tmfield:{template['public_id']}:{code}")]
-                for label, code in FIELDS.values()
-            ],
-            [(legacy.text("back"), f"tmpl:{template['public_id']}")],
-        )
+        state.state, state.payload = "template_groups", {"template": template["public_id"]}
+        return _groups(template)
+    if data.startswith("tmg:"):
+        _, public_id, raw_index = data.split(":", 2)
+        if not raw_index.isascii() or not raw_index.isdigit():
+            raise ValidationError("Раздел шаблона недоступен.")
+        template = await service.get_template(user_id, public_id)
+        state.state, state.payload = "template_groups", {"template": public_id}
+        return _group(template, int(raw_index))
     if data.startswith(("tmfield:", "tmrename:", "tmdelask:")):
         parts = data.split(":")
         if parts[0] == "tmfield" and len(parts) != 3:
@@ -292,7 +343,14 @@ async def handle_templates(session, user_id, state, message, data, settings):
             field = next((field for field, (_, code) in FIELDS.items() if code == parts[2]), None)
             if field is None:
                 raise ValidationError("Неизвестное поле шаблона.")
-            state.state, state.payload = "template_edit", {**state.payload, "field": field}
+            state.state, state.payload = (
+                "template_edit",
+                {
+                    **state.payload,
+                    "field": field,
+                    "group": _group_index(field),
+                },
+            )
             return _prompt(state)
         if parts[0] == "tmrename":
             state.state = "template_rename"
@@ -311,6 +369,11 @@ async def handle_templates(session, user_id, state, message, data, settings):
         _, token, raw = data.split(":", 2)
         _pending(state, "template_edit", token)
         return await _edit_preview(service, user_id, state, raw)
+    if data.startswith("tmback:"):
+        _pending(state, "template_preview", data.split(":", 1)[1])
+        await _current(service, user_id, state.payload)
+        state.state, state.payload = "template_edit", {**state.payload, "token": _token()}
+        return _prompt(state)
     if message and state.state == "template_edit":
         return await _edit_preview(service, user_id, state, (message.text or "").strip())
     if message and state.state == "template_rename":

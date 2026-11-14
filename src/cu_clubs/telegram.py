@@ -13,6 +13,8 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 
 from cu_clubs import legacy
+from cu_clubs.analytics_ui import handle_analytics
+from cu_clubs.api_ui import handle_integrations
 from cu_clubs.attendance_ui import handle_attendance
 from cu_clubs.calendar_ui import handle_calendar
 from cu_clubs.event_ui import handle_events
@@ -20,6 +22,7 @@ from cu_clubs.identity_ui import handle_identity
 from cu_clubs.models import Conversation, TelegramUpdate
 from cu_clubs.screens import ScreenManager, UIScreen
 from cu_clubs.services import ClubNotFound, ClubService, PermissionDenied, ValidationError
+from cu_clubs.survey_ui import handle_surveys
 from cu_clubs.telegram_files import attendance_upload
 from cu_clubs.template_ui import handle_templates
 from cu_clubs.ui_common import keyboard
@@ -280,6 +283,7 @@ async def _menu(service: ClubService, user_id: int) -> tuple[str, InlineKeyboard
     ]
     if await service.managed_clubs(user_id):
         rows.append([(legacy.text("my_clubs"), "manage")])
+    rows.append([("Опросы после встреч", "supending")])
     if await service.is_admin(user_id):
         rows.append([(legacy.text("admin_menu"), "admin")])
     return legacy.text("main_menu_text"), keyboard(*rows)
@@ -445,10 +449,21 @@ def build_dispatcher(sessionmaker: Any, settings: Any) -> Dispatcher:
                     and command[0].split("@", 1)[0] == "/start"
                     and command[1].startswith("a_")
                 )
+                start_link = (
+                    message
+                    and len(command) == 2
+                    and command[0].split("@", 1)[0] == "/start"
+                    and command[1].startswith("l_")
+                )
                 if start_qr:
                     _reset(state)
                     flow = await handle_attendance(
                         session, user.id, state, None, f"aq:{command[1][2:]}", settings
+                    )
+                elif start_link:
+                    _reset(state)
+                    flow = await handle_integrations(
+                        session, user.id, state, None, f"apilinkopen:{command[1][2:]}", settings
                     )
                 elif start_event:
                     _reset(state)
@@ -459,6 +474,28 @@ def build_dispatcher(sessionmaker: Any, settings: Any) -> Dispatcher:
                     flow = await handle_identity(
                         session, user.id, state, message, data, settings, person
                     )
+                    if flow is None:
+                        flow = await handle_integrations(
+                            session, user.id, state, message, data, settings
+                        )
+                    if flow is None:
+                        flow = await handle_surveys(
+                            session,
+                            user.id,
+                            state,
+                            message.text if message else None,
+                            data,
+                            settings,
+                        )
+                    if flow is None:
+                        flow = await handle_analytics(
+                            session,
+                            user.id,
+                            state,
+                            message.text if message else None,
+                            data,
+                            settings,
+                        )
                     if flow is None:
                         flow = await handle_attendance(
                             session, user.id, state, message, data, settings, upload=upload
@@ -584,6 +621,9 @@ def build_dispatcher(sessionmaker: Any, settings: Any) -> Dispatcher:
                     markup.inline_keyboard.insert(
                         1, [InlineKeyboardButton(text="Календарь", callback_data="calendar")]
                     )
+                    markup.inline_keyboard.insert(
+                        2, [InlineKeyboardButton(text="Аналитика", callback_data="an")]
+                    )
                 elif data == "profile":
                     text = legacy.personal_account_text(person["full_name"]) + (
                         "\n\nПочта не подтверждена."
@@ -640,11 +680,27 @@ def build_dispatcher(sessionmaker: Any, settings: Any) -> Dispatcher:
                         rows.append([("Шаблоны", f"tmpls:{public_id}")])
                     if permissions["manage_events"] or permissions["record_attendance"]:
                         rows.append([("Встречи клуба", f"eventlist:{public_id}")])
-                    if permissions["is_admin"]:
-                        rows.append([("Изменить уровень", f"adminlevel:{public_id}")])
-                        rows.append([("Назначить лидера", f"adminleader:{public_id}")])
+                    if permissions["is_admin"] or permissions["is_leader"]:
+                        rows.append([("Аналитика", f"anclub:{public_id}")])
+                        rows.append([("Настройки клуба", f"clubsettings:{public_id}")])
                     rows.append([("В меню", "menu")])
                     markup = keyboard(*rows)
+                elif data.startswith("clubsettings:"):
+                    public_id = data.split(":")[1]
+                    permissions = await service.permissions(user.id, public_id)
+                    if not (permissions["is_admin"] or permissions["is_leader"]):
+                        raise PermissionDenied("Настройки доступны лидеру или администратору.")
+                    rows = [
+                        [("Опрос клуба", f"suclub:{public_id}")],
+                        [("Интеграции", f"apiclub:{public_id}")],
+                    ]
+                    if permissions["is_admin"]:
+                        rows += [
+                            [("Изменить уровень", f"adminlevel:{public_id}")],
+                            [("Назначить лидера", f"adminleader:{public_id}")],
+                        ]
+                    rows.append([("Назад", f"manageclub:{public_id}")])
+                    text, markup, banner_role = "Настройки клуба", keyboard(*rows), "club-owner"
                 elif data.startswith("editmenu:"):
                     _reset(state)
                     text, markup = await _edit_menu(service, user.id, data.split(":", 1)[1])

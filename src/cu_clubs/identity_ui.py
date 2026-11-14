@@ -1,5 +1,6 @@
 """Student verification and administrator dialogues over shared application commands."""
 
+import re
 from html import escape
 from uuid import uuid4
 
@@ -34,12 +35,13 @@ def _screen(text, *rows):
     return Screen(text, keyboard(*rows), banner_role="auth")
 
 
-def _auth_preview(state):
+def _auth_preview(state, notice=""):
     return _screen(
-        f"Отправить код на {escape(state.payload['login'])}@edu.centraluniversity.ru?",
+        (escape(notice) + "\n\n" if notice else "")
+        + f"Отправить код на {escape(state.payload['login'])}@edu.centraluniversity.ru?",
         [("Отправить код", f"authsend:{state.payload['token']}")],
-        [("Исправить логин", f"authlogin:{state.payload['token']}")],
-        [(legacy.text("cancel"), "menu")],
+        [("Назад к логину", f"authback:{state.payload['token']}:login")],
+        [(legacy.text("cancel"), f"authcancel:{state.payload['token']}")],
     )
 
 
@@ -47,8 +49,8 @@ def _code_screen(state, text="Введи код из письма"):
     return _screen(
         text,
         [(legacy.text("resend"), f"authresend:{state.payload['token']}")],
-        [("Исправить логин", f"authlogin:{state.payload['token']}")],
-        [(legacy.text("cancel"), "menu")],
+        [(legacy.text("back"), f"authback:{state.payload['token']}:preview")],
+        [(legacy.text("cancel"), f"authcancel:{state.payload['token']}")],
     )
 
 
@@ -58,10 +60,134 @@ def _validate_token(data, action, state):
         raise ValidationError("Эта кнопка устарела. Продолжи текущий диалог.")
 
 
-def _login_screen():
+def _login_screen(state, notice=""):
+    text = legacy.text("email_request") + "\n\nМожно указать логин в Тайме, например i.ivanov."
+    if state.payload.get("full_name"):
+        text += "\nФИО: " + escape(state.payload["full_name"])
+    if state.payload.get("login"):
+        text += "\nТекущий логин: " + escape(state.payload["login"])
+    if notice:
+        text = escape(notice) + "\n\n" + text
     return _screen(
-        legacy.text("email_request") + "\n\nМожно указать логин в Тайме, например i.ivanov.",
-        [(legacy.text("cancel"), "menu")],
+        text,
+        [(legacy.text("back"), f"authback:{state.payload['token']}:fio")],
+        [(legacy.text("cancel"), f"authcancel:{state.payload['token']}")],
+    )
+
+
+def _fio_screen(state, notice=""):
+    text = legacy.text("fio_request")
+    if state.payload.get("full_name"):
+        text += "\nТекущее ФИО: " + escape(state.payload["full_name"])
+    if notice:
+        text = escape(notice) + "\n\n" + text
+    return _screen(text, [(legacy.text("cancel"), f"authcancel:{state.payload['token']}")])
+
+
+def _origin(value):
+    """Accept only routes that can safely resume the interrupted user flow."""
+    value = value or "profile"
+    if value in {"profile", "aqpersonal"}:
+        return value
+    if re.fullmatch(r"apilink:[0-9a-fA-F]{32}", value):
+        return value
+    if re.fullmatch(r"event:[a-zA-Z0-9_-]{1,64}(?::link)?", value):
+        return value
+    if re.fullmatch(r"aqi:[0-9a-fA-F-]{32,36}", value):
+        return value
+    return "profile"
+
+
+async def _validated_origin(session, user_id, state, settings):
+    origin = _origin(state.payload.get("resume"))
+    if origin.startswith("aqi:"):
+        from cu_clubs.attendance import AttendanceService
+
+        try:
+            service = AttendanceService(session, settings.verification_secret)
+            raw = await service.resume_raw(user_id, origin[4:])
+            await service.resolve_qr(user_id, raw)
+        except (PermissionDenied, ValidationError):
+            return "profile"
+    return origin
+
+
+def _auth_back(state, target):
+    expected = {"preview": "auth_code", "login": "auth_preview", "fio": "auth_login"}
+    if state.state != expected.get(target):
+        raise ValidationError("Эта кнопка устарела. Продолжи текущий диалог.")
+    if target == "preview":
+        state.state = "auth_preview"
+        return _auth_preview(state)
+    if target == "login":
+        state.state = "auth_login"
+        return _login_screen(state)
+    if target == "fio":
+        state.state = "auth_fio"
+        return _fio_screen(state)
+    raise ValidationError("Эта кнопка устарела. Продолжи текущий диалог.")
+
+
+async def _auth_cancel(session, user_id, state, settings):
+    origin = await _validated_origin(session, user_id, state, settings)
+    state.state, state.payload = "idle", {}
+    if origin == "profile":
+        return await handle_identity(session, user_id, state, None, "profile", settings)
+    if origin == "aqpersonal":
+        from cu_clubs.attendance_ui import handle_attendance
+
+        return await handle_attendance(session, user_id, state, None, origin, settings)
+    if origin.startswith("apilink:"):
+        from cu_clubs.api_ui import handle_integrations
+
+        return await handle_integrations(session, user_id, state, None, origin, settings)
+    if origin.startswith("aqi:"):
+        from cu_clubs.attendance_ui import handle_attendance
+
+        return await handle_attendance(session, user_id, state, None, origin, settings)
+    if origin.startswith("event:"):
+        from cu_clubs.event_ui import handle_events
+
+        return await handle_events(session, user_id, state, None, origin, settings)
+    return await handle_identity(session, user_id, state, None, "profile", settings)
+
+
+async def _auth_success(session, user_id, state, settings):
+    origin = await _validated_origin(session, user_id, state, settings)
+    state.state, state.payload = "idle", {}
+    if origin == "profile":
+        screen = await handle_identity(session, user_id, state, None, "profile", settings)
+        screen.text = "Почта подтверждена.\n\n" + screen.text
+        return screen
+    if origin.startswith("apilink:"):
+        from cu_clubs.api_ui import handle_integrations
+
+        return await handle_integrations(session, user_id, state, None, origin, settings)
+    if origin == "aqpersonal":
+        from cu_clubs.attendance_ui import handle_attendance
+
+        screen = await handle_attendance(session, user_id, state, None, origin, settings)
+        screen.text = "Почта подтверждена.\n\n" + screen.text
+        return screen
+    if origin.startswith("aqi:"):
+        from cu_clubs.attendance_ui import handle_attendance
+
+        screen = await handle_attendance(session, user_id, state, None, origin, settings)
+        screen.text = "Почта подтверждена.\n\n" + screen.text
+        return screen
+    if origin.startswith("event:"):
+        from cu_clubs.event_ui import handle_events
+
+        try:
+            screen = await handle_events(session, user_id, state, None, origin, settings)
+        except (PermissionDenied, ValidationError):
+            return _screen("Почта подтверждена", [("Продолжить", origin)])
+        screen.text = "Почта подтверждена.\n\n" + screen.text
+        return screen
+    return _screen(
+        "Почта подтверждена. Теперь можно продолжить исходное действие.",
+        [("Продолжить", origin)],
+        [("Личный кабинет", "profile")],
     )
 
 
@@ -81,6 +207,7 @@ async def handle_identity(session, user_id, state, message, data, settings, pers
         )
         rows = []
         rows.append([("Мой QR", "aqpersonal")])
+        rows.append([("Подключённые боты", "apigrants")])
         if guest:
             text += "\n\nПрофиль внешнего гостя. Почта ЦУ не требуется."
             rows.append([("Я студент ЦУ", "auth:profile")])
@@ -94,14 +221,23 @@ async def handle_identity(session, user_id, state, message, data, settings, pers
         rows.append([("В меню", "menu")])
         return Screen(text, keyboard(*rows), banner_role="personal-account")
     if data.startswith("auth:"):
+        origin = _origin(data[5:])
         state.state, state.payload = (
             "auth_fio",
             {
-                "resume": data[5:] or "profile",
+                "resume": origin,
                 "token": uuid4().hex,
             },
         )
-        return _screen(legacy.text("fio_request"), [(legacy.text("cancel"), "menu")])
+        return _fio_screen(state)
+    if data.startswith(("authback:", "authcancel:")):
+        action, token, *target = data.split(":")
+        _validate_token(f"{action}:{token}", action, state)
+        if action == "authcancel":
+            return await _auth_cancel(session, user_id, state, settings)
+        if len(target) != 1:
+            raise ValidationError("Эта кнопка устарела. Продолжи текущий диалог.")
+        return _auth_back(state, target[0])
     if data.split(":", 1)[0] in {"authsend", "authresend", "authlogin"}:
         action = data.split(":", 1)[0]
         _validate_token(data, action, state)
@@ -109,8 +245,9 @@ async def handle_identity(session, user_id, state, message, data, settings, pers
             raise ValidationError("Эта кнопка устарела. Открой подтверждение почты заново.")
         data = action
     if data == "authlogin" and state.state.startswith("auth_"):
-        state.state = "auth_login"
-        return _login_screen()
+        if state.state == "auth_code":
+            state.state = "auth_preview"
+        return _auth_back(state, "login")
     if data in {"authsend", "authresend"} and state.state in {"auth_preview", "auth_code"}:
         delivery = await _identity(session, settings).start_verification(
             user_id, state.payload["full_name"], state.payload["login"]
@@ -119,21 +256,23 @@ async def handle_identity(session, user_id, state, message, data, settings, pers
         state.payload = {**state.payload, "challenge_id": delivery["challenge_id"]}
         return _code_screen(state, "Код поставлен в очередь отправки. Введи код из письма.")
     if message and state.state == "auth_fio":
-        full_name = normalize_name(message.text or "")
+        try:
+            full_name = normalize_name(message.text or "")
+        except ValidationError as error:
+            return _fio_screen(state, str(error))
         state.state, state.payload = "auth_login", {**state.payload, "full_name": full_name}
-        return _login_screen()
+        return _login_screen(state)
     if message and state.state == "auth_login":
-        state.state, state.payload = (
-            "auth_preview",
-            {**state.payload, "login": normalize_login(message.text or "")},
-        )
+        try:
+            login = normalize_login(message.text or "")
+        except ValidationError as error:
+            return _login_screen(state, str(error))
+        state.state, state.payload = "auth_preview", {**state.payload, "login": login}
         return _auth_preview(state)
     if message and state.state == "auth_code":
         result = await _identity(session, settings).verify(user_id, (message.text or "").strip())
         if result["status"] == "verified":
-            resume = state.payload.get("resume", "profile")
-            state.state, state.payload = "idle", {}
-            return _screen("Почта подтверждена", [("Продолжить", resume)], [("В меню", "menu")])
+            return await _auth_success(session, user_id, state, settings)
         if result["status"] == "invalid":
             return _code_screen(
                 state,

@@ -28,6 +28,16 @@ async def merge_into_imported(session, old, canonical, actor):
     from cu_clubs.attendance_models import AttendanceQR
 
     old_id, new_id = old.id, canonical.id
+    from cu_clubs.api_models import ApiGrant, ApiLink
+    from cu_clubs.surveys import merge_survey_people
+
+    await merge_survey_people(session, old_id, new_id)
+    await session.execute(
+        update(ApiGrant).where(ApiGrant.person_id == old_id).values(person_id=new_id)
+    )
+    await session.execute(
+        update(ApiLink).where(ApiLink.person_id == old_id).values(person_id=new_id)
+    )
     await merge_attendance_people(session, old_id, new_id, actor)
     # Preserve independent club roles and subscriptions without duplicating them.
     for member in list(

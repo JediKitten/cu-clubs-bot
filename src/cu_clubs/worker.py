@@ -29,7 +29,7 @@ from cu_clubs.db import make_database
 from cu_clubs.identity import verification_delivery
 from cu_clubs.inbox_crypto import open_update, seal_update
 from cu_clubs.integrations.mail import send_verification_code
-from cu_clubs.models import Outbox, TelegramUpdate
+from cu_clubs.models import Conversation, Outbox, TelegramUpdate
 from cu_clubs.screens import ScreenManager
 from cu_clubs.services import ClubService, PermissionDenied
 from cu_clubs.telegram import build_dispatcher
@@ -138,6 +138,17 @@ async def claim_outbox(sessions) -> dict | None:
         item = await session.scalar(
             select(Outbox)
             .where(Outbox.status == "pending", Outbox.available_at <= now)
+            .where(
+                or_(
+                    Outbox.kind != "survey.invitation",
+                    ~select(Conversation.telegram_id)
+                    .where(
+                        Conversation.telegram_id == Outbox.recipient_telegram_id,
+                        Conversation.state != "idle",
+                    )
+                    .exists(),
+                )
+            )
             .order_by(Outbox.created_at, Outbox.id)
             .with_for_update(skip_locked=True)
             .limit(1)
@@ -276,7 +287,27 @@ async def deliver_domain_notice(sessions, bot: Bot, item: dict, settings: Settin
 async def process_outbox(sessions, bot: Bot, item: dict, settings: Settings) -> None:
     values = {"lease_until": None}
     try:
-        if item["kind"] == "calendar.digest.notice":
+        if item["kind"] == "survey.invitation":
+            from cu_clubs.surveys import SurveysService
+
+            async with sessions() as session:
+                pending = await SurveysService(session).pending(item["recipient"])
+                target = next(
+                    (event for event in pending if event["event"] == item["payload"]["event"]), None
+                )
+            if target is None:
+                result = SimpleNamespace(message_id=None)
+            else:
+                message_id = await ScreenManager(sessions, bot).show(
+                    item["recipient"],
+                    "Как прошла встреча?\n\n" + escape(target["title"]),
+                    keyboard([("Оценить встречу", f"su:{target['event']}")]),
+                    legacy.banner("events"),
+                    banner_role="events",
+                    force_new=True,
+                )
+                result = SimpleNamespace(message_id=message_id)
+        elif item["kind"] == "calendar.digest.notice":
             from cu_clubs.events import EventService
 
             async with sessions() as session:
@@ -423,6 +454,20 @@ async def calendar_loop(sessions, settings):
         await asyncio.sleep(settings.calendar_sync_interval_seconds)
 
 
+async def survey_loop(sessions):
+    from cu_clubs.events import EventService
+    from cu_clubs.surveys import SurveysService
+
+    while True:
+        try:
+            async with sessions.begin() as session:
+                await EventService(session).capture_started_events()
+                await SurveysService(session).enqueue_invitations()
+        except Exception as error:
+            logger.warning("Survey scheduling failed: %s", type(error).__name__)
+        await asyncio.sleep(60)
+
+
 async def run_worker(settings: Settings) -> None:
     if not settings.external_delivery_enabled:
         raise ValueError("Worker requires external delivery to be enabled explicitly")
@@ -432,12 +477,19 @@ async def run_worker(settings: Settings) -> None:
     last_backup_check = 0.0
     polling = None
     calendar_task = None
+    survey_task = None
+    api_task = None
     try:
         identity = await bot.get_me()
         if identity.username != settings.telegram_bot_username:
             raise ValueError("Telegram token belongs to a different bot")
         if settings.calendar_sync_enabled:
             calendar_task = asyncio.create_task(calendar_loop(sessions, settings))
+        survey_task = asyncio.create_task(survey_loop(sessions))
+        if settings.api_enabled:
+            from cu_clubs.api_delivery import loop
+
+            api_task = asyncio.create_task(loop(sessions, settings))
         if settings.telegram_transport == "polling":
             webhook = await bot.get_webhook_info()
             if webhook.url:
@@ -469,7 +521,7 @@ async def run_worker(settings: Settings) -> None:
                                 update(Outbox)
                                 .where(
                                     Outbox.recipient_telegram_id == message.from_user.id,
-                                    Outbox.kind == "club.created",
+                                    Outbox.kind.in_(["club.created", "survey.invitation"]),
                                     Outbox.status == "failed",
                                     Outbox.last_error == "TelegramForbiddenError",
                                 )
@@ -493,7 +545,9 @@ async def run_worker(settings: Settings) -> None:
             if not item and not outgoing:
                 await asyncio.sleep(0.5)
     finally:
-        tasks = [task for task in (calendar_task, polling) if task is not None]
+        tasks = [
+            task for task in (calendar_task, polling, survey_task, api_task) if task is not None
+        ]
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)

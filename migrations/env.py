@@ -1,14 +1,26 @@
 """Alembic migration runner. Credentials come from environment settings, never ini."""
 
 import asyncio
+from importlib import import_module
 
 from alembic import context
 from sqlalchemy import Connection
 
-from cu_clubs import attendance_models, calendar_models, event_models, identity_models, screens  # noqa: F401
 from cu_clubs.config import Settings
 from cu_clubs.db import make_database
 from cu_clubs.models import Base
+
+# Register every mapped table for metadata comparison as well as explicit upgrades.
+for module_name in (
+    "event_models",
+    "identity_models",
+    "attendance_models",
+    "calendar_models",
+    "survey_models",
+    "api_models",
+    "screens",
+):
+    import_module("cu_clubs." + module_name)
 
 config = context.config
 target_metadata = Base.metadata

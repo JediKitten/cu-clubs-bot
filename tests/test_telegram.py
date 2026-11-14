@@ -498,6 +498,7 @@ def test_main_menu_uses_exact_original_labels_and_permission_gates(interaction):
                 "profile": "Личный кабинет",
                 "my_events": "Мои мероприятия",
                 "faq": "FAQ",
+                "supending": "Опросы после встреч",
                 **privileged,
             }
 

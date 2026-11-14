@@ -2,7 +2,7 @@
 
 from datetime import datetime, timedelta
 from html import escape
-from uuid import uuid4
+from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 
 from aiogram.types import Message
@@ -183,6 +183,22 @@ async def _card(service, user_id, public_id, *, via_link=False) -> Screen:
         elif event["status"] == "published":
             rows.append([("Отменить встречу", f"evcancelask:{public_id}:{event['version']}")])
         rows.append([("Сохранить как шаблон", f"evtemplate:{public_id}")])
+    if event.get("can_reschedule"):
+        rows.append([("Опрос встречи", f"suevent:{public_id}")])
+        if event["status"] in {"published", "held"}:
+            rows.append([("Аналитика встречи", f"anevent:{public_id}")])
+    if (
+        event["status"] in {"published", "held"}
+        and event.get("ends_at")
+        and datetime.fromisoformat(event["ends_at"]) <= datetime.now(MOSCOW)
+    ):
+        from cu_clubs.attendance_models import Attendance
+
+        account = await service.clubs._account(user_id)
+        if account and await service.session.get(
+            Attendance, (UUID(event["id"]), account.person_id)
+        ):
+            rows.insert(0, [("Оценить встречу", f"su:{public_id}")])
     if event["status"] in {"published", "held"}:
         rows.append([("Поделиться", f"evshare:{public_id}{suffix}")])
     for club in event["clubs"]:

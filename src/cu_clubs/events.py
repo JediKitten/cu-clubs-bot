@@ -303,7 +303,18 @@ class EventService:
             result[key] = result[key].isoformat() if result[key] else None
         return result
 
-    def _audit(self, actor_id: int, action: str, event: Event, details: dict | None = None):
+    async def _audit(self, actor_id: int, action: str, event: Event, details: dict | None = None):
+        from cu_clubs.api_service import record_change
+
+        change = {
+            "event.published": "event.published",
+            "event.updated": "event.updated",
+            "event.cancelled": "event.cancelled",
+            "event.registered": "registration.changed",
+            "event.registration_cancelled": "registration.changed",
+        }.get(action)
+        if change:
+            await record_change(self.session, event, change)
         self.session.add(
             Audit(
                 actor_telegram_id=actor_id,
@@ -407,7 +418,10 @@ class EventService:
         self.session.add(event)
         await self.session.flush()
         self.session.add(EventClub(event_id=event.id, club_id=club.id, role="initiator"))
-        self._audit(actor_id, "event.draft_created", event)
+        await self._audit(actor_id, "event.draft_created", event)
+        from cu_clubs.surveys import SurveysService
+
+        await SurveysService(self.session).ensure_event_snapshot(event)
         await self.session.flush()
         return await self._dto(event, actor_id)
 
@@ -447,7 +461,7 @@ class EventService:
             old.status = "superseded"
             await self.session.flush()
             await self._new_invitation(event, old.partner_club_id)
-        self._audit(actor_id, "event.draft_updated", event)
+        await self._audit(actor_id, "event.draft_updated", event)
         await self.session.flush()
         return await self._dto(event, actor_id)
 
@@ -465,7 +479,10 @@ class EventService:
         event.status = "published"
         event.version += 1
         event.last_editor_telegram_id = actor_id
-        self._audit(actor_id, "event.published", event)
+        await self._audit(actor_id, "event.published", event)
+        from cu_clubs.surveys import SurveysService
+
+        await SurveysService(self.session).ensure_event_snapshot(event)
         await self.session.flush()
         await self._notify(event, "event.published", subscribers=True)
         return await self._dto(event, actor_id)
@@ -550,7 +567,7 @@ class EventService:
                 event_id=event.id, person_id=person.id, status="active", changed_at=now
             )
         )
-        self._audit(actor_id, "event.registered", event, {"person": str(person.id)})
+        await self._audit(actor_id, "event.registered", event, {"person": str(person.id)})
         await self.session.flush()
         return await self._dto(event, actor_id)
 
@@ -578,7 +595,7 @@ class EventService:
                     changed_at=registration.cancelled_at,
                 )
             )
-            self._audit(actor_id, "event.registration_cancelled", event)
+            await self._audit(actor_id, "event.registration_cancelled", event)
             await self.session.flush()
         return await self._dto(event, actor_id)
 
@@ -607,7 +624,9 @@ class EventService:
             setattr(event, key, value)
         event.version += 1
         event.last_editor_telegram_id = actor_id
-        self._audit(actor_id, "event.updated", event, {"version": event.version, "before": before})
+        await self._audit(
+            actor_id, "event.updated", event, {"version": event.version, "before": before}
+        )
         await self.session.flush()
         await self._notify(event, "event.changed")
         return await self._dto(event, actor_id)
@@ -626,7 +645,7 @@ class EventService:
         event.status = "cancelled"
         event.version += 1
         event.last_editor_telegram_id = actor_id
-        self._audit(actor_id, "event.cancelled", event)
+        await self._audit(actor_id, "event.cancelled", event)
         await self.session.flush()
         await self._notify(event, "event.cancelled")
         return await self._dto(event, actor_id)
@@ -684,7 +703,7 @@ class EventService:
         event.status = "pending_partner"
         event.version += 1
         invitation = await self._new_invitation(event, partner.id)
-        self._audit(actor_id, "event.partner_invited", event, {"partner": str(partner.id)})
+        await self._audit(actor_id, "event.partner_invited", event, {"partner": str(partner.id)})
         dto = await self._dto(event, actor_id)
         dto["invitation_id"] = str(invitation.id)
         return dto
@@ -743,7 +762,7 @@ class EventService:
         event.status = "published" if accept else "draft"
         if accept:
             self.session.add(EventClub(event_id=event.id, club_id=partner.id, role="partner"))
-        self._audit(
+        await self._audit(
             actor_id, "event.partner_accepted" if accept else "event.partner_declined", event
         )
         await self.session.flush()
@@ -769,7 +788,7 @@ class EventService:
             invitation.status = "superseded"
         event.status = "draft"
         event.version += 1
-        self._audit(actor_id, "event.invitation_withdrawn", event)
+        await self._audit(actor_id, "event.invitation_withdrawn", event)
         await self.session.flush()
         return await self._dto(event, actor_id)
 

@@ -43,7 +43,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         version=__version__,
         description=(
             "Club profiles, events and registrations through Telegram. "
-            "The public club integration API is under development."
+            "Versioned club API uses club scopes and explicit user delegation."
         ),
         lifespan=lifespan,
     )
@@ -105,4 +105,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
         return {"ok": True}
 
+    from cu_clubs.api import install_api
+
+    install_api(app, config)
     return app

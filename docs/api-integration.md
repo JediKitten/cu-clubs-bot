@@ -1,0 +1,79 @@
+# API клубных ботов v1
+
+Префикс `/api/v1`, JSON UTF-8, даты ISO 8601 с часовым поясом. Схема запросов,
+ответов и обязательных заголовков: `/openapi.json`, интерактивно `/docs`.
+Запускаемый пример: [club_api_client.py](../examples/club_api_client.py).
+
+## Ключ и согласие студента
+
+Лидер открывает «Мои клубы → клуб → Настройки клуба → Интеграции → Создать ключ».
+Ключ выдаётся отдельным файлом; API хранит только хеш. Передавать
+`Authorization: Bearer cck_…`. Scopes: events:read, events:write,
+registration:self, attendance:write, roster:read, changes:read.
+Ключ ограничен своим клубом и принятыми коллаборациями, даже если выдавший его
+администратор имеет права на другие клубы. Отзыв ключа и роли выдавшего его
+лидера проверяется при каждом запросе. Личные записи лидера не раскрываются.
+
+`POST /links` с `telegram_id` возвращает id, verification_uri, exchange_code,
+expires_at. Человек открывает ссылку, подтверждает почту при необходимости и
+**отдельно** разрешает подключение. ID и ключ клуба сами по себе не дают согласия.
+`POST /links/{id}/exchange` с exchange_code выдаёт user_token на 90 дней по умолчанию.
+Передавать его в `X-User-Token` вместе с ключом клуба. Код одноразовый, привязан
+к клиенту и человеку, истекает через 10 минут. Привязка отзывается через
+«Личный кабинет → Подключённые боты»; сама верификация никого не регистрирует.
+
+## Ресурсы
+
+| Операции | Scope |
+|---|---|
+| GET /clubs/{id}, /events?from=…&to=…&club_id=…, /events/{id} | events:read |
+| POST /events; PATCH /events/{id}; POST /events/{id}/publish, /invite, /cancel | events:write; If-Match для существующей встречи |
+| POST /links, /links/{id}/exchange; GET /me | registration:self; /me требует X-User-Token |
+| PUT/DELETE /events/{id}/registrations/me; GET /events/{id}/participants/me | registration:self + X-User-Token |
+| GET /events/{id}/participants?format=json\|xlsx&all_participants=true | roster:read |
+| POST /events/{id}/attendance | attendance:write; ФИО/логин/необязательный тег; только студент |
+| POST /events/{id}/attendance-imports | attendance:write; multipart поле file, .xlsx ≤10MB; только предпросмотр |
+| POST /attendance-imports/{id}/resolve, /confirm | attendance:write; текущая version; resolve: номера rows для явного принятия конфликтов |
+| GET /changes?cursor=…&limit=… | changes:read; порядок commit, только свой клуб |
+| GET/POST /webhook-endpoints; DELETE /webhook-endpoints/{id} | changes:read |
+| GET /webhook-deliveries; POST /webhook-deliveries/{id}/retry | changes:read; ручной повтор с прежним delivery_id |
+
+Каждая изменяющая операция требует Idempotency-Key (1–128 печатных ASCII).
+Повтор того же запроса возвращает прежний ответ, другое тело/пользователь/If-Match
+с тем же ключом — 409. Кэш с секретами зашифрован, не хранит их открытым текстом.
+Текущая версия встречи возвращается в ETag; передавать `If-Match: "3"`.
+Старая версия — 412, отсутствие If-Match — 428. Ошибки содержат error.code,
+error.message, при валидации error.field, а также request_id. 401 — ключ/токен,
+403 — права/scope, 404 — недоступный объект, 409 — конфликт/места/закрытая запись,
+422 — данные, 429 — лимит (120/мин по умолчанию, заголовок Retry-After).
+JSON ограничен 256KB, multipart 10MB плюс небольшая служебная часть.
+
+## Подписанные webhooks
+
+Только публичный HTTPS:443, без credentials/redirects. Все DNS-адреса проверяются,
+соединение закрепляется за проверенным IP с TLS/SNI исходного имени. Private,
+loopback, служебные адреса и DNS rebinding не дают доступ к внутренней сети.
+Секрет подписи возвращается при создании и его идемпотентных повторах; далее
+API его не раскрывает, фоновой доставке он доступен в зашифрованном виде.
+
+Типы: event.published/updated/cancelled, registration.changed, attendance.changed.
+Тело содержит delivery_id, id изменения, type, event_id, version, occurred_at.
+Имена людей, почта, roster и ключи в feed не попадают.
+HMAC-SHA256 от `timestamp + "." + raw_body` находится в
+`X-CU-Clubs-Signature: v1=<hex>`, timestamp — X-CU-Clubs-Timestamp,
+ID — X-CU-Clubs-Delivery. Проверять исходные байты, давность ≤300 секунд и
+constant-time сравнение; verifier есть в примере клиента. Дедуплицировать ID:
+timeout может последовать уже после принятия сообщения. Повторы используют
+тот же ID; физически однократная доставка не обещается. Пропуски восстанавливать
+через /changes, ошибки и ручной повтор доступны через delivery API.
+
+## Тестовый сервер
+
+API слушает **127.0.0.1:8310 на сервере**. Серверным клубным ботам доступен этот
+адрес; для внешних клиентов нужен отдельный HTTPS reverse proxy. Сейчас внешний
+TLS-маршрут не настроен и порт не открыт на все интерфейсы. Для проверки:
+`ssh -L 8310:127.0.0.1:8310 kir@87.120.84.226`, затем localhost:8310.
+Чужие reverse proxy routes при выпуске не меняются.
+SMTP отложен: нового студента нельзя фиктивно подтвердить ради API. Исключение
+тестового лидера не подтверждает студенческую почту. При восстановлении сохранять
+тот же VERIFICATION_SECRET для encrypted inbox, idempotency и webhook secrets.

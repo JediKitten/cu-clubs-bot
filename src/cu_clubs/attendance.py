@@ -301,6 +301,9 @@ class AttendanceService:
             )
         )
         await self.session.flush()
+        from cu_clubs.api_service import record_change
+
+        await record_change(self.session, event, "attendance.changed")
         return {
             "created": True,
             "event": event.public_id,
