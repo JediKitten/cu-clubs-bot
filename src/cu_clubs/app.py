@@ -11,10 +11,10 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from cu_clubs import __version__
 from cu_clubs.config import Settings
+from cu_clubs.db import make_database
 from cu_clubs.inbox_crypto import seal_update
 from cu_clubs.models import TelegramUpdate
 
@@ -26,13 +26,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        engine = create_async_engine(
-            config.database_url.get_secret_value(),
-            pool_pre_ping=True,
-            connect_args={"connect_timeout": 2},
-        )
+        engine, sessions = make_database(config)
         app.state.db_engine = engine
-        app.state.sessions = async_sessionmaker(engine, expire_on_commit=False)
+        app.state.sessions = sessions
         try:
             yield
         finally:

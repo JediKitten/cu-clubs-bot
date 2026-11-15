@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from uuid import uuid4
 
 from cu_clubs.access import CATEGORIES, self_registration_enabled
-from cu_clubs.identity import IdentityService, normalize_name
+from cu_clubs.identity import IdentityService, normalize_login, normalize_name
 from cu_clubs.services import ValidationError
 from cu_clubs.ui_common import Screen, keyboard
 
@@ -54,9 +54,28 @@ def begin_category(state, origin="menu", *, changing=False):
 def guest_name_screen(state, notice=""):
     from html import escape
 
-    text = "Укажи ФИО для гостевого профиля. Почта и логин в Тайме не нужны."
+    university = state.payload.get("category") in {"student", "staff"}
+    text = (
+        "Укажи ФИО для личного кабинета."
+        if university
+        else "Укажи ФИО для гостевого профиля. Почта и логин в Тайме не нужны."
+    )
     if state.payload.get("full_name"):
         text += "\nФИО: " + escape(state.payload["full_name"])
+    return Screen(
+        (escape(notice) + "\n\n" if notice else "") + text,
+        keyboard([("Назад", f"categoryback:{state.payload['nonce']}")]),
+        banner_role="auth",
+    )
+
+
+def login_screen(state, notice=""):
+    from html import escape
+
+    text = "Укажи логин в Тайме, например i.ivanov. Подтверждать почту пока не нужно."
+    text += "\nФИО: " + escape(state.payload["full_name"])
+    if state.payload.get("login"):
+        text += "\nЛогин: " + escape(state.payload["login"])
     return Screen(
         (escape(notice) + "\n\n" if notice else "") + text,
         keyboard([("Назад", f"categoryback:{state.payload['nonce']}")]),
@@ -103,13 +122,24 @@ async def category_gate(session, user_id, state, person, command, data, settings
     if not self_registration_enabled(session):
         return None
     selected = bool(person.get("declared_category") and person.get("category_selected_at"))
-    if state.state in {"category_name", "category_preview"} and not command:
+    if state.state in {"category_name", "category_login", "category_preview"} and not command:
         nonce = state.payload["nonce"]
         if data == f"categoryback:{nonce}":
-            if state.state == "category_preview":
-                state.state = "category_name"
+            if state.state in {"category_preview", "category_login"}:
+                state.state = (
+                    "category_login"
+                    if state.state == "category_preview"
+                    and state.payload.get("category") in {"student", "staff"}
+                    else "category_name"
+                )
                 state.payload = {**state.payload, "nonce": uuid4().hex[:12]}
-                return CategoryResult(screen=guest_name_screen(state))
+                return CategoryResult(
+                    screen=(
+                        login_screen(state)
+                        if state.state == "category_login"
+                        else guest_name_screen(state)
+                    )
+                )
             return CategoryResult(
                 screen=begin_category(state, state.payload["resume"], changing=selected)
             )
@@ -118,11 +148,25 @@ async def category_gate(session, user_id, state, person, command, data, settings
                 name = normalize_name(message.text or "")
             except ValidationError as error:
                 return CategoryResult(screen=guest_name_screen(state, str(error)))
-            state.state = "category_preview"
+            state.state = (
+                "category_login"
+                if state.payload["category"] in {"student", "staff"}
+                else "category_preview"
+            )
             state.payload = {**state.payload, "full_name": name, "nonce": uuid4().hex[:12]}
+        elif state.state == "category_login" and message:
+            try:
+                login = normalize_login(message.text or "")
+            except ValidationError as error:
+                return CategoryResult(screen=login_screen(state, str(error)))
+            state.state = "category_preview"
+            state.payload = {**state.payload, "login": login, "nonce": uuid4().hex[:12]}
         elif data == f"categoryconfirm:{nonce}" and state.state == "category_preview":
             await IdentityService(session, "", mail_available=False).declare_category(
-                user_id, state.payload["category"], full_name=state.payload["full_name"]
+                user_id,
+                state.payload["category"],
+                full_name=state.payload["full_name"],
+                time_login=state.payload.get("login"),
             )
             origin = safe_origin(state.payload["resume"])
             state.state, state.payload = "idle", {}
@@ -131,6 +175,8 @@ async def category_gate(session, user_id, state, person, command, data, settings
             raise ValidationError("Кнопка устарела. Продолжи ввод ФИО или нажми «Назад».")
         if state.state == "category_name":
             return CategoryResult(screen=guest_name_screen(state))
+        if state.state == "category_login":
+            return CategoryResult(screen=login_screen(state))
         from html import escape
 
         return CategoryResult(
@@ -138,7 +184,12 @@ async def category_gate(session, user_id, state, person, command, data, settings
                 "Категория: "
                 + CATEGORIES[state.payload["category"]]
                 + "\nФИО: "
-                + escape(state.payload["full_name"]),
+                + escape(state.payload["full_name"])
+                + (
+                    "\nЛогин в Тайме: " + escape(state.payload["login"])
+                    if state.payload.get("login")
+                    else ""
+                ),
                 keyboard(
                     [("Подтвердить", f"categoryconfirm:{state.payload['nonce']}")],
                     [("Назад", f"categoryback:{state.payload['nonce']}")],
@@ -156,7 +207,7 @@ async def category_gate(session, user_id, state, person, command, data, settings
         else:
             if len(parts) != 3 or parts[2] not in CATEGORIES:
                 raise ValidationError("Неизвестная категория.")
-            if (
+            if parts[2] in {"student", "staff"} or (
                 parts[2] in {"applicant", "external"}
                 and person.get("kind") != "guest"
                 and not person.get("verified_at")
@@ -166,6 +217,8 @@ async def category_gate(session, user_id, state, person, command, data, settings
                 state.payload = {
                     **state.payload,
                     "category": parts[2],
+                    "full_name": person.get("full_name") if person.get("verified_at") else "",
+                    "login": person.get("time_login") or "",
                     "nonce": uuid4().hex[:12],
                 }
                 return CategoryResult(screen=guest_name_screen(state))
@@ -178,6 +231,14 @@ async def category_gate(session, user_id, state, person, command, data, settings
     if data == "category:profile":
         return CategoryResult(screen=begin_category(state, "profile", changing=selected))
     if selected:
+        if person.get("declared_category") in {"student", "staff"} and (
+            not person.get("time_login") or len((person.get("full_name") or "").split()) < 2
+        ):
+            origin = await entry_origin(session, user_id, command, data, settings)
+            begin_category(state, origin, changing=True)
+            state.state = "category_name"
+            state.payload["category"] = person["declared_category"]
+            return CategoryResult(screen=guest_name_screen(state))
         return None
     if state.state == "category_choice" and not command:
         return CategoryResult(screen=category_screen(state))

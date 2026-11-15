@@ -10,8 +10,9 @@
   "nodes": [
     {"id":"start","label":"Вход /start","role":"all","status":"implemented","children":["category","menu","deep_club","deep_event","deep_qr","deep_api"]},
     {"id":"category","label":"Временный выбор категории","role":"all","status":"implemented","children":["category_fio","menu","deep_club","deep_event","deep_qr","deep_api","catalog","profile","events","my_events"],"back":"start","notes":"Саморегистрация активна только при специальном test flag; выбор не подтверждает почту. Возвращает к безопасному origin: клуб, событие, QR, API-согласие, профиль, каталог, мероприятия или мои записи."},
-    {"id":"category_fio","label":"Ввод ФИО гостевого профиля","role":"applicant/external","status":"implemented","children":["category_preview"],"back":"category"},
-    {"id":"category_preview","label":"Предпросмотр категории и ФИО","role":"applicant/external","status":"implemented","children":["menu","deep_club","deep_event","deep_qr","deep_api","catalog","profile","events","my_events"],"back":"category_fio","notes":"Подтверждение возвращает пользователя к сохранённому безопасному исходному маршруту."},
+    {"id":"category_fio","label":"Ввод ФИО профиля","role":"all","status":"implemented","children":["category_login","category_preview"],"back":"category"},
+    {"id":"category_login","label":"Логин в Тайме","role":"student/staff","status":"implemented","children":["category_preview"],"back":"category_fio","notes":"Обязателен для студентов/сотрудников. Не подтверждает почту; после подтверждения сохраняется в профиле."},
+    {"id":"category_preview","label":"Предпросмотр категории, ФИО и логина","role":"all","status":"implemented","children":["menu","deep_club","deep_event","deep_qr","deep_api","catalog","profile","events","my_events"],"back":"category_fio","notes":"Подтверждение сохраняет ФИО и логин студентов/сотрудников и возвращает к безопасному исходному маршруту. Назад для университета — логин, для гостя — ФИО."},
     {"id":"deep_club","label":"Ссылка клуба c_{public_id}","role":"all","status":"implemented","children":["club_card"],"back":"menu"},
     {"id":"deep_event","label":"Ссылка встречи e_{token}","role":"all","status":"implemented","children":["event_card"],"back":"menu"},
     {"id":"deep_qr","label":"QR-ссылка a_{token}","role":"all","status":"implemented","children":["qr_entry"]},

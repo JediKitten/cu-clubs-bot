@@ -209,6 +209,8 @@ async def handle_identity(session, user_id, state, message, data, settings, pers
             if category == "staff":
                 text = text.replace("<b>не определена</b>", "<b>сотрудник</b>")
             text += f"\n\nКатегория: {escape(CATEGORIES.get(category, 'Не выбрана'))}"
+            if person.get("time_login"):
+                text += "\nЛогин в Тайме: " + escape(person["time_login"])
             text += "\nПодтверждение почты пока не требуется."
             return Screen(
                 text,

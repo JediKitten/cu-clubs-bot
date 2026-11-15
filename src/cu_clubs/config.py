@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     database_url: SecretStr = SecretStr(
         "postgresql+psycopg://cu_clubs:local-dev-only@127.0.0.1:5432/cu_clubs"
     )
+    self_service_pooler: bool = False
     readiness_timeout_seconds: float = Field(default=3.0, gt=0, le=30)
     timezone: str = "Europe/Moscow"
 

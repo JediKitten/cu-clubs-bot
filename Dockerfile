@@ -6,7 +6,7 @@ COPY pyproject.toml uv.lock README.md ./
 COPY src ./src
 RUN uv sync --frozen --no-dev --no-editable
 
-FROM python:3.12-slim
+FROM python:3.12-slim AS runtime
 ENV PATH="/app/.venv/bin:$PATH" PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
 WORKDIR /app
 RUN apt-get update && apt-get install --no-install-recommends -y postgresql-client \
@@ -19,3 +19,19 @@ COPY --chown=app:app migrations ./migrations
 USER app
 EXPOSE 8000
 CMD ["cu-clubs", "api"]
+
+FROM runtime AS selfservice
+USER root
+RUN apt-get update && apt-get install --no-install-recommends -y openssh-server \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupmod --gid 10001 app \
+    && usermod --uid 10001 --gid 10001 --shell /bin/sh app \
+    && mkdir -p /run/sshd /data && chown -R app:app /app /backups /data \
+    && usermod --password '*' app
+COPY --chown=app:app deploy/selfservice.py deploy/ops.py deploy/sshd_config /app/deploy/
+USER app
+EXPOSE 2222
+CMD ["python", "/app/deploy/selfservice.py"]
+
+# Preserve the original image command for builds without an explicit target.
+FROM runtime AS default

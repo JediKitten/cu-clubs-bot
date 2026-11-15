@@ -35,6 +35,12 @@ def labels(bot):
     return [b.text for row in bot.sent[-1].reply_markup.inline_keyboard for b in row]
 
 
+async def complete_university(feed, action, *, name="Иванов Иван Иванович", login="i.ivanov"):
+    await feed(NEW, text=name)
+    await feed(NEW, text=login, restart=True)
+    await feed(NEW, data=action("Подтвердить"))
+
+
 @pytest.mark.parametrize("category", ["Студент", "Сотрудник"])
 def test_category_once_profile_change_cancel_and_no_email(sessions, category):
     async def scenario():
@@ -45,11 +51,15 @@ def test_category_once_profile_change_cancel_and_no_email(sessions, category):
             assert labels(bot) == ["Студент", "Сотрудник", "Абитуриент", "Внешний"]
             old_pick = action(category)
             await feed(NEW, data=old_pick, restart=True)
+            assert "Укажи ФИО" in shown(bot.sent[-1])
+            await complete_university(feed, action)
             assert "Кто ты?" not in shown(bot.sent[-1])
             await feed(NEW, text="/start")
             assert "Кто ты?" not in shown(bot.sent[-1])
             await feed(NEW, data="profile")
             assert category in shown(bot.sent[-1])
+            assert "i.ivanov" in shown(bot.sent[-1])
+            assert "Иванов Иван Иванович" in shown(bot.sent[-1])
             assert "Подтвердить почту" not in labels(bot)
             await feed(NEW, data=action("Изменить категорию"))
             await feed(NEW, data=action("Назад"))
@@ -59,7 +69,8 @@ def test_category_once_profile_change_cancel_and_no_email(sessions, category):
             async with sessions() as session:
                 person = (await ClubService(session)._account(NEW)).person
                 assert person.declared_category == ("student" if category == "Студент" else "staff")
-                assert person.verified_at is None and person.time_login is None
+                assert person.verified_at is None and person.time_login == "i.ivanov"
+                assert person.full_name == "Иванов Иван Иванович"
                 assert await session.scalar(select(func.count()).select_from(EmailChallenge)) == 0
         finally:
             await bot.session.close()
@@ -76,6 +87,7 @@ def test_closed_event_origin_is_preserved_without_auto_registration(sessions):
         try:
             await feed(NEW, text=f"/start e_{event['public_id']}")
             await feed(NEW, data=action("Студент"), restart=True)
+            await complete_university(feed, action)
             assert event["title"] in shown(bot.sent[-1])
             async with sessions() as session:
                 assert await session.scalar(select(func.count()).select_from(Registration)) == 0
@@ -139,6 +151,7 @@ def test_new_start_replaces_old_pending_origin(sessions):
             await feed(NEW, text="/start c_cinema")
             assert action("Студент") != old
             await feed(NEW, data=action("Студент"))
+            await complete_university(feed, action)
             assert "Киноклуб" in shown(bot.sent[-1])
             assert any(
                 b.callback_data == "clubs"
@@ -165,6 +178,7 @@ def test_category_api_deep_link_still_needs_separate_consent(sessions):
             raw = link["verification_uri"].split("start=l_", 1)[1]
             await feed(NEW, text="/start l_" + raw)
             await feed(NEW, data=action("Сотрудник"), restart=True)
+            await complete_university(feed, action)
             assert "Разрешить подключение" in labels(bot)
             async with sessions() as session:
                 assert (await session.get(ApiLink, UUID(link["id"]))).approved_at is None
@@ -189,6 +203,7 @@ def test_declared_attendee_receives_post_event_survey(sessions):
         try:
             await feed(NEW, text="/start")
             await feed(NEW, data=action("Студент"))
+            await complete_university(feed, action)
             async with sessions.begin() as session:
                 service = AttendanceService(session, config.verification_secret)
                 qr = await service.event_qr(LEADER, event["public_id"])
@@ -199,6 +214,40 @@ def test_declared_attendee_receives_post_event_survey(sessions):
                 model.registration_deadline = model.starts_at
                 assert await SurveysService(session).enqueue_invitations() == 1
                 assert (await session.get(Conversation, NEW)).state == "idle"
+        finally:
+            await bot.session.close()
+
+    asyncio.run(scenario())
+
+
+def test_university_required_fields_back_validation_and_incomplete_existing_profile(sessions):
+    async def scenario():
+        config = enable(sessions)
+        bot, feed, action = transport(sessions, config)
+        try:
+            await feed(NEW, text="/start")
+            await feed(NEW, data=action("Студент"))
+            await feed(NEW, text="Иван")
+            assert "полностью" in shown(bot.sent[-1])
+            await feed(NEW, text="Иванов Иван Иванович")
+            await feed(NEW, text="bad login")
+            assert "без пробелов" in shown(bot.sent[-1])
+            await feed(NEW, text="i.ivanov")
+            await feed(NEW, data=action("Назад"))
+            assert "i.ivanov" in shown(bot.sent[-1])
+            await feed(NEW, data=action("Назад"))
+            assert "Иванов Иван Иванович" in shown(bot.sent[-1])
+            await complete_university(feed, action)
+            async with sessions.begin() as session:
+                person = (await ClubService(session)._account(NEW)).person
+                person.time_login = None
+            await feed(NEW, data="profile", restart=True)
+            assert "Укажи ФИО" in shown(bot.sent[-1])
+            await complete_university(feed, action, login="restored.login")
+            assert "restored.login" in shown(bot.sent[-1])
+            assert "Иванов Иван Иванович" in shown(bot.sent[-1])
+            async with sessions() as session:
+                assert (await ClubService(session)._account(NEW)).person.verified_at is None
         finally:
             await bot.session.close()
 

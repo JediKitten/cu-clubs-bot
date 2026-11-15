@@ -11,10 +11,16 @@ from cu_clubs.config import Settings
 
 
 def make_database(settings: Settings) -> tuple[AsyncEngine, async_sessionmaker[AsyncSession]]:
+    options = {}
+    connect_args = {"connect_timeout": 5}
+    if settings.self_service_pooler:
+        connect_args["prepare_threshold"] = None
+        options.update(pool_size=2, max_overflow=0)
     engine = create_async_engine(
         settings.database_url.get_secret_value(),
         pool_pre_ping=True,
-        connect_args={"connect_timeout": 5},
+        connect_args=connect_args,
+        **options,
     )
     return engine, async_sessionmaker(
         engine,

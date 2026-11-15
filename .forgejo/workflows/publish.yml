@@ -1,0 +1,76 @@
+name: Check, publish and propose deployment
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+jobs:
+  check:
+    runs-on: homelab-docker
+    container: ghcr.io/catthehacker/ubuntu:act-24.04
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: cu_clubs
+          POSTGRES_PASSWORD: ci-only
+          POSTGRES_DB: cu_clubs_test
+        options: >-
+          --health-cmd "pg_isready -U cu_clubs -d cu_clubs_test"
+          --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql+psycopg://cu_clubs:ci-only@postgres:5432/cu_clubs_test
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v6
+        with:
+          version: "0.13.7"
+          python-version: "3.12"
+          enable-cache: false
+      - run: uv sync --locked
+      - run: uv run --frozen ruff check .
+      - run: uv run --frozen ruff format --check .
+      - run: python3 scripts/check_api_docs.py
+      - run: uv run --frozen pytest
+  publish:
+    needs: check
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: homelab-docker
+    container: ghcr.io/catthehacker/ubuntu:act-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Publish self-service image
+        env:
+          REGISTRY_USER: ${{ vars.REGISTRY_USER || github.repository_owner }}
+          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN || github.token }}
+          IMAGE_TAG: ${{ github.sha }}
+          SOURCE_REPO: ${{ github.repository }}
+        run: |
+          set -eu
+          image="git.cu3rd.ru/$(printf '%s' "$SOURCE_REPO" | tr '[:upper:]' '[:lower:]')"
+          export DOCKER_CONFIG
+          DOCKER_CONFIG=$(mktemp -d)
+          trap 'rm -rf "$DOCKER_CONFIG"' EXIT
+          printf '%s' "$REGISTRY_TOKEN" | docker login git.cu3rd.ru --username "$REGISTRY_USER" --password-stdin
+          docker build --target selfservice -t "$image:$IMAGE_TAG" .
+          docker push "$image:$IMAGE_TAG"
+  deliver:
+    needs: publish
+    runs-on: homelab-docker
+    enable-openid-connect: true
+    container: ghcr.io/catthehacker/ubuntu:act-24.04
+    steps:
+      - name: Propose reviewed deployment
+        uses: https://git.cu3rd.ru/cu3rd/self-service/actions/deploy@52e5e58342d6af391c8cbb98710215289f5e052d
+        with:
+          project: cu-clubs-bot
+          environment: test
+          app: api
+          tag: ${{ github.sha }}
+          secrets-json: ${{ toJSON(secrets) }}
+          variables-json: ${{ toJSON(vars) }}
+          delivery-token: ${{ secrets.SELF_SERVICE_DELIVERY_TOKEN }}

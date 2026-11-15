@@ -28,8 +28,19 @@ async def declare(session, category):
     clubs = ClubService(session)
     profile = await clubs.get_or_create_person(ACTOR, "Declared Example")
     identity = IdentityService(session, SECRET, mail_available=False)
-    selected = await identity.declare_category(ACTOR, category)
-    assert selected["verified_at"] is None and selected["time_login"] is None
+    selected = await identity.declare_category(
+        ACTOR,
+        category,
+        **(
+            {"full_name": "Declared Example", "time_login": "declared.example"}
+            if category in {"student", "staff"}
+            else {}
+        ),
+    )
+    assert selected["verified_at"] is None
+    assert selected["time_login"] == (
+        "declared.example" if category in {"student", "staff"} else None
+    )
     assert selected["kind"] is None
     assert selected["category_selected_at"] is not None
     return await session.get(Person, UUID(profile["id"]))
@@ -65,7 +76,8 @@ def test_declared_category_registration_and_qr_matrix(sessions, category):
             mark = await session.scalar(select(Attendance))
             assert mark.category_at_mark == category
             assert mark.guest_at_mark == (category in {"applicant", "external"})
-            assert person.verified_at is None and person.time_login is None
+            assert person.verified_at is None
+            assert bool(person.time_login) == (category in {"student", "staff"})
             if category in {"applicant", "external"}:
                 with pytest.raises(ValidationError):
                     await attendance.mark_manual(LEADER, event["public_id"], person.id)
@@ -166,5 +178,29 @@ def test_database_rejects_invalid_or_unpaired_category(sessions, category, selec
                     )
                 )
                 await session.flush()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("category", ["student", "staff"])
+def test_university_category_requires_valid_identity_without_email_proof(sessions, category):
+    sessions.configure(info={"test_self_registration_enabled": True})
+
+    async def scenario():
+        async with sessions.begin() as session:
+            await ClubService(session).get_or_create_person(ACTOR, "Telegram name")
+            identity = IdentityService(session, SECRET, mail_available=False)
+            with pytest.raises(ValidationError):
+                await identity.declare_category(ACTOR, category)
+            with pytest.raises(ValidationError):
+                await identity.declare_category(
+                    ACTOR, category, full_name="Иван", time_login="bad login"
+                )
+            selected = await identity.declare_category(
+                ACTOR, category, full_name="Иванов  Иван Иванович", time_login=" I.Ivanov "
+            )
+            assert selected["full_name"] == "Иванов Иван Иванович"
+            assert selected["time_login"] == "i.ivanov"
+            assert selected["verified_at"] is None
 
     asyncio.run(scenario())

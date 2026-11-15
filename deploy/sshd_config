@@ -1,0 +1,17 @@
+Port 2222
+ListenAddress 0.0.0.0
+HostKey /data/ssh_host_ed25519_key
+PidFile none
+AuthorizedKeysFile /run/self-service/ssh/authorized_keys
+StrictModes no
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PubkeyAuthentication yes
+UsePAM no
+AllowUsers app
+PermitRootLogin no
+AllowAgentForwarding no
+AllowTcpForwarding no
+X11Forwarding no
+PermitTunnel no
+Subsystem sftp internal-sftp

@@ -107,7 +107,12 @@ class IdentityService:
         return _profile(account.person, telegram_id)
 
     async def declare_category(
-        self, telegram_id: int, category: str, *, full_name: str | None = None
+        self,
+        telegram_id: int,
+        category: str,
+        *,
+        full_name: str | None = None,
+        time_login: str | None = None,
     ) -> dict:
         from cu_clubs.access import CATEGORIES, self_registration_enabled
 
@@ -116,7 +121,17 @@ class IdentityService:
         if category not in CATEGORIES:
             raise ValidationError("Неизвестная категория.")
         person = await self._lock_person(telegram_id)
-        if full_name is not None:
+        if category in {"student", "staff"}:
+            name = normalize_name(full_name if full_name is not None else person.full_name)
+            login = normalize_login(
+                time_login if time_login is not None else person.time_login or ""
+            )
+            if person.verified_at and (name != person.full_name or login != person.time_login):
+                raise ValidationError(
+                    "Подтверждённые данные профиля нельзя менять выбором категории."
+                )
+            person.full_name, person.time_login = name, login
+        elif full_name is not None:
             if category not in {"applicant", "external"} or person.verified_at or person.time_login:
                 raise ValidationError("Используй существующие данные профиля.")
             person.full_name, person.kind = normalize_name(full_name), "guest"
