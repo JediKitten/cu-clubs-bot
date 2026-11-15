@@ -19,6 +19,7 @@ from cu_clubs.attendance_ui import handle_attendance
 from cu_clubs.calendar_ui import handle_calendar
 from cu_clubs.category_ui import category_gate
 from cu_clubs.club_card_ui import club_card_extras
+from cu_clubs.digest_ui import handle_digest
 from cu_clubs.event_ui import handle_events
 from cu_clubs.identity_ui import handle_identity
 from cu_clubs.models import Conversation, TelegramUpdate
@@ -528,6 +529,8 @@ def build_dispatcher(sessionmaker: Any, settings: Any) -> Dispatcher:
                             session, user.id, state, message, data, settings
                         )
                     if flow is None:
+                        flow = await handle_digest(session, user.id, state, message, data, settings)
+                    if flow is None:
                         flow = await handle_notifications(
                             session, user.id, state, message, data, settings
                         )
@@ -694,6 +697,9 @@ def build_dispatcher(sessionmaker: Any, settings: Any) -> Dispatcher:
                     )
                     markup.inline_keyboard.insert(
                         2, [InlineKeyboardButton(text="Аналитика", callback_data="an")]
+                    )
+                    markup.inline_keyboard.insert(
+                        3, [InlineKeyboardButton(text="Создать дайджест", callback_data="digest")]
                     )
                 elif data == "profile":
                     text = legacy.personal_account_text(person["full_name"]) + (
@@ -944,7 +950,7 @@ def build_dispatcher(sessionmaker: Any, settings: Any) -> Dispatcher:
         if callback:
             await callback.answer()
         if document is not None:
-            await bot.send_document(user.id, document)
+            await manager.send_document(user.id, document)
 
     router.message.register(dispatch)
     router.callback_query.register(dispatch)

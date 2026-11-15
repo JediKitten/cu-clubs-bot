@@ -1,0 +1,33 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+html,body{margin:0;padding:0;background:var(--figma-color-bg);color:var(--figma-color-text);font:12px var(--font-family,sans-serif)}
+fig-content{display:block;padding:16px}fig-field{display:block;margin-bottom:14px}fig-field>label{display:block;margin-bottom:6px}fig-footer{display:flex;gap:8px;padding:12px 16px;border-top:1px solid var(--figma-color-border)}
+.note,#selection,#status,#preview{line-height:1.5;white-space:pre-wrap}.note{color:var(--figma-color-text-secondary);margin-bottom:14px}#status{padding:0 16px 12px}input[type=file]{max-width:100%}.row{display:flex;align-items:center;gap:8px;margin-bottom:12px}#preview{margin:12px 0}fig-input-text{width:100%}
+</style></head><body><div id="plugin-root"><fig-content>
+<strong>Клубная часть дайджеста</strong><p class="note">1. В CU Clubs: Админ-меню → Создать дайджест → скачать файл.
+2. Выдели обложку и страницы одного выпуска 1200×1500.
+3. Загрузи файл, проверь и создай копию.</p>
+<div id="selection" role="status"></div>
+<fig-field><label for="file">Файл CU Clubs (.json, до 1 МБ)</label><input id="file" type="file" accept=".json,application/json"></fig-field>
+<fig-field><label>Или вставь содержимое файла</label><fig-input-text id="data" multiline placeholder="JSON из CU Clubs"></fig-input-text></fig-field>
+<fig-field><label>Шрифт новых клубных строк</label><fig-dropdown id="font"><option value="Graphik LC">Graphik LC — как в макете</option><option value="Inter">Inter — черновик при отсутствии Graphik</option></fig-dropdown></fig-field>
+<div class="row"><fig-switch id="descriptions"></fig-switch><label>Добавлять полное описание после названия встречи</label></div>
+<div class="row"><fig-switch id="otherweeks"></fig-switch><label>Сохранить строки других категорий, даже если у них другая неделя</label></div>
+<p class="note">Клуб: названия клубов. Подробности: название встречи, по желанию описание. Другие категории сохраняют текст и стиль и размещаются заново. Исходный выпуск остаётся на месте. При выборе созданной плагином секции обновляется только эта копия.</p>
+<div id="preview"></div></fig-content><div id="status" role="status" aria-live="polite"></div>
+<fig-footer><fig-button id="check">Проверить</fig-button><fig-button id="run" type="submit" disabled>Создать копию</fig-button></fig-footer></div>
+<script>
+try{localStorage.getItem('x')}catch(e){const m=new Map();Object.defineProperty(window,'localStorage',{value:{getItem:k=>m.get(k)||null,setItem:(k,v)=>m.set(k,String(v)),removeItem:k=>m.delete(k),clear:()=>m.clear()},configurable:true})}
+const $=id=>document.getElementById(id),post=message=>parent.postMessage({pluginMessage:message},'*');let selected=false,valid=false,working=false;
+function checked(id){const n=$(id);return n.checked===true||n.value===true||n.value==='true'}
+function raw(){return String($('data').value||'')}
+function sync(){ $('check').disabled=working||!selected||!raw();$('run').disabled=working||!valid||!selected; }
+function invalidate(){valid=false;$('preview').textContent='';sync()}
+$('file').addEventListener('change',async e=>{invalidate();const f=e.target.files[0];if(!f)return;if(f.size>1048576){$('status').textContent='Файл больше 1 МБ.';return}$('data').value=await f.text();$('status').textContent='Файл загружен. Нажми «Проверить».';sync()});
+$('data').addEventListener('change',invalidate);
+$('check').addEventListener('click',()=>{working=true;sync();$('status').textContent='Проверяю файл и выделение…';post({type:'preview',raw:raw()})});
+$('run').addEventListener('click',()=>{working=true;sync();$('status').textContent='Создаю редактируемую копию…';post({type:'generate',raw:raw(),options:{font:$('font').value,descriptions:checked('descriptions'),keepOtherWeeks:checked('otherweeks')}})});
+window.addEventListener('message',e=>{const m=e.data.pluginMessage;if(!m)return;if(m.type==='selection'){selected=m.ok;$('selection').textContent=m.message;valid=false;sync();return}working=false;
+if(m.type==='preview'){valid=true;$('run').textContent=m.update?'Обновить копию':'Создать копию';$('preview').textContent=`Встреч: ${m.events}. Строк других категорий: ${m.other}.\n`+m.days.map(d=>`${d.date}: ${d.count} клубных точек`).join('\n')+(m.mismatches?`\nВнимание: ${m.mismatches} строк других категорий относятся к другой неделе.`:'');$('status').textContent='Проверено. Можно создать копию.';}
+if(m.type==='error'){$('status').textContent=m.message;valid=false}if(m.type==='success'){$('status').textContent=`Готово: ${m.pages} страниц, ${m.events} клубных встреч. Исходник сохранён.`;valid=false}sync()});
+post({type:'ready'});
+</script></body></html>

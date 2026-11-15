@@ -81,7 +81,9 @@
     {"id":"digest","label":"Дайджест и его автоматическая доставка","role":"admin","status":"deferred","children":[],"back":"calendar"},
     {"id":"faq_full","label":"Полный FAQ и справочник клуба","role":"all","status":"partial","children":["catalog"],"back":"menu"},
     {"id":"smtp","label":"Реальная почтовая верификация","role":"student","status":"deferred","children":[],"notes":"Требуется настроить SMTP; нет подтверждения через реальное письмо."},
-    {"id":"https","label":"Публичный HTTPS и production API","role":"external","status":"deferred","children":[],"notes":"Текущая работа через сервер/SSH-туннель; публичный внешний бот не принят."},
-    {"id":"cu3rd","label":"Перенос на cu3rd","role":"admin","status":"deferred","children":[],"notes":"Будущая миграция, не часть текущего маршрута."}
+    {"id":"https","label":"Публичный HTTPS и production API","role":"external","status":"partial","children":[],"notes":"Текущая работа через сервер/SSH-туннель; публичный внешний бот не принят."},
+    {"id":"cu3rd","label":"Перенос на cu3rd","role":"admin","status":"partial","children":[],"notes":"Перенос разрешён; PR204 принят, приёмка HTTPS/SSH и данных выполняется отдельно."},
+    {"id":"digest_export","label":"Админ: создать дайджест → неделя → все/выбор → предпросмотр → JSON","role":"admin","status":"implemented","children":["digest_figma"],"back":"admin_menu"},
+    {"id":"digest_figma","label":"Figma: файл → проверка → копия, клубные строки/точки и переразмещение","role":"admin/editor","status":"implemented","children":[],"back":"digest_export"}
   ]
 }

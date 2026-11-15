@@ -231,6 +231,31 @@ class ScreenManager:
             chat_id=screen.chat_id, text=content, parse_mode="HTML", reply_markup=markup
         )
 
+    async def _clear_document(self, screen: UIScreen) -> None:
+        cache = dict(screen.banner_cache or {})
+        document_id = cache.pop("ui_document_message_id", None)
+        if document_id:
+            try:
+                await self.bot.delete_message(chat_id=screen.chat_id, message_id=document_id)
+            except TelegramBadRequest as error:
+                if "message to delete not found" not in str(error).lower():
+                    raise
+        screen.banner_cache = cache
+
+    async def send_document(self, chat_id: int, document: Any) -> None:
+        """Track this window's file durably and remove it on the next navigation."""
+        async with self.sessions.begin() as session:
+            await self._lock(session, chat_id)
+            screen = await session.get(UIScreen, (self.bot.id, chat_id))
+            if screen is None:
+                raise ValueError("Show the window before attaching its document")
+            await self._clear_document(screen)
+            result = await self.bot.send_document(chat_id=chat_id, document=document)
+            screen.banner_cache = {
+                **(screen.banner_cache or {}),
+                "ui_document_message_id": result.message_id,
+            }
+
     async def show(
         self,
         chat_id: int,
@@ -245,6 +270,8 @@ class ScreenManager:
         async with self.sessions.begin() as session:
             await self._lock(session, chat_id)
             screen = await session.get(UIScreen, (self.bot.id, chat_id))
+            if screen:
+                await self._clear_document(screen)
             callback_message = _own_callback_message(self.bot, chat_id, trigger)
             previous_id = screen.message_id if screen else None
             previous_kind = screen.kind if screen else None
@@ -356,6 +383,7 @@ class ScreenManager:
             screen = await session.get(UIScreen, (self.bot.id, message.chat.id))
             if screen is None or screen.page_token != token or not 0 <= index < len(screen.pages):
                 return True
+            await self._clear_document(screen)
             old_id = screen.message_id
             screen.page_index = index
             photo = screen.photo_file_id
