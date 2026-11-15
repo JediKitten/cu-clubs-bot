@@ -162,12 +162,19 @@ async def category_gate(session, user_id, state, person, command, data, settings
             state.state = "category_preview"
             state.payload = {**state.payload, "login": login, "nonce": uuid4().hex[:12]}
         elif data == f"categoryconfirm:{nonce}" and state.state == "category_preview":
-            await IdentityService(session, "", mail_available=False).declare_category(
-                user_id,
-                state.payload["category"],
-                full_name=state.payload["full_name"],
-                time_login=state.payload.get("login"),
-            )
+            try:
+                await IdentityService(session, "", mail_available=False).declare_category(
+                    user_id,
+                    state.payload["category"],
+                    full_name=state.payload["full_name"],
+                    time_login=state.payload.get("login"),
+                )
+            except ValidationError as error:
+                university = state.payload["category"] in {"student", "staff"}
+                state.state = "category_login" if university else "category_name"
+                state.payload = {**state.payload, "nonce": uuid4().hex[:12]}
+                screen = login_screen if university else guest_name_screen
+                return CategoryResult(screen=screen(state, str(error)))
             origin = safe_origin(state.payload["resume"])
             state.state, state.payload = "idle", {}
             return CategoryResult(resume=origin)

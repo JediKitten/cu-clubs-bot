@@ -130,6 +130,14 @@ class IdentityService:
                 raise ValidationError(
                     "Подтверждённые данные профиля нельзя менять выбором категории."
                 )
+            conflict = await self.session.scalar(
+                select(Person.id).where(Person.time_login == login, Person.id != person.id)
+            )
+            if conflict is not None:
+                raise ValidationError(
+                    "Этот логин уже используется в другом профиле. "
+                    "Проверь логин или обратись к администратору."
+                )
             person.full_name, person.time_login = name, login
         elif full_name is not None:
             if category not in {"applicant", "external"} or person.verified_at or person.time_login:

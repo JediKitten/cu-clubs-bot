@@ -204,3 +204,44 @@ def test_university_category_requires_valid_identity_without_email_proof(session
             assert selected["verified_at"] is None
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("imported", [False, True])
+def test_duplicate_declared_login_does_not_merge_or_change_profiles(sessions, imported):
+    sessions.configure(info={"test_self_registration_enabled": True})
+
+    async def scenario():
+        async with sessions.begin() as session:
+            clubs = ClubService(session)
+            identity = IdentityService(session, SECRET, mail_available=False)
+            if imported:
+                original = Person(full_name="Historical Original", time_login="taken.login")
+                session.add(original)
+                await session.flush()
+            else:
+                await clubs.get_or_create_person(ACTOR, "First Telegram")
+                await identity.declare_category(
+                    ACTOR, "student", full_name="Original Student", time_login="taken.login"
+                )
+                original = (await clubs._account(ACTOR)).person
+            original_id, original_name = original.id, original.full_name
+            await clubs.get_or_create_person(ACTOR + 1, "Second Telegram")
+            claimant = (await clubs._account(ACTOR + 1)).person
+            claimant_id = claimant.id
+            with pytest.raises(ValidationError, match="логин уже используется"):
+                await identity.declare_category(
+                    ACTOR + 1, "staff", full_name="Claimant Name", time_login=" TAKEN.LOGIN "
+                )
+            # A validation failure leaves the transaction usable and both identities intact.
+            await session.flush()
+            assert original.id == original_id and original.full_name == original_name
+            assert original.time_login == "taken.login" and original.verified_at is None
+            assert claimant.id == claimant_id and claimant.full_name == "Second Telegram"
+            assert claimant.time_login is None and claimant.declared_category is None
+            recovered = await identity.declare_category(
+                ACTOR + 1, "staff", full_name="Claimant Name", time_login="free.login"
+            )
+            assert recovered["time_login"] == "free.login"
+            assert await session.get(Person, original_id) is original
+
+    asyncio.run(scenario())

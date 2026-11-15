@@ -252,3 +252,49 @@ def test_university_required_fields_back_validation_and_incomplete_existing_prof
             await bot.session.close()
 
     asyncio.run(scenario())
+
+
+def test_duplicate_login_keeps_api_origin_and_recovers_in_current_window(sessions):
+    async def scenario():
+        await seed(sessions)
+        config = enable(sessions)
+        async with sessions.begin() as session:
+            from cu_clubs.models import Person
+
+            session.add(Person(full_name="Historical Original", time_login="taken.login"))
+            api = ApiService(session, config)
+            issued = await api.issue_client(LEADER, "cinema", "Collision test client", SCOPES)
+            client = await api.authenticate(issued["api_key"])
+            link = await api.create_link(client, NEW)
+        bot, feed, action = transport(sessions, config)
+        try:
+            raw = link["verification_uri"].split("start=l_", 1)[1]
+            await feed(NEW, text="/start l_" + raw)
+            await feed(NEW, data=action("Сотрудник"))
+            await feed(NEW, text="Иванов Иван Иванович")
+            await feed(NEW, text=" TAKEN.LOGIN ")
+            stale_confirm = action("Подтвердить")
+            await feed(NEW, data=stale_confirm, restart=True)
+            assert "логин уже используется" in shown(bot.sent[-1])
+            assert "Иванов Иван Иванович" in shown(bot.sent[-1])
+            assert "taken.login" in shown(bot.sent[-1])
+            assert labels(bot) == ["Назад"]
+            async with sessions() as session:
+                state = await session.get(Conversation, NEW)
+                assert state.state == "category_login"
+                assert state.payload["resume"] == "apilink:" + link["id"]
+                person = (await ClubService(session)._account(NEW)).person
+                assert person.time_login is None and person.declared_category is None
+                assert (await session.get(ApiLink, UUID(link["id"]))).approved_at is None
+            await feed(NEW, text="free.login", restart=True)
+            assert action("Подтвердить") != stale_confirm
+            await feed(NEW, data=action("Подтвердить"))
+            assert "Разрешить подключение" in labels(bot)
+            async with sessions() as session:
+                person = (await ClubService(session)._account(NEW)).person
+                assert person.time_login == "free.login" and person.verified_at is None
+                assert (await session.get(ApiLink, UUID(link["id"]))).approved_at is None
+        finally:
+            await bot.session.close()
+
+    asyncio.run(scenario())
