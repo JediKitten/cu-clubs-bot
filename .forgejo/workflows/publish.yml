@@ -12,6 +12,9 @@ jobs:
     timeout-minutes: 15
     env:
       TEST_DATABASE_URL: postgresql+psycopg://cu_clubs:ci-only@127.0.0.1:5432/cu_clubs_test
+      # Keep cache and venv on the same workspace volume so wheels are hardlinked.
+      UV_CACHE_DIR: .uv-cache
+      UV_LINK_MODE: hardlink
     steps:
     - name: Checkout exact source revision without stored credentials
       env:
@@ -33,9 +36,11 @@ jobs:
         pg_isready --host=127.0.0.1 --port=5432
         su postgres -c "psql --set=ON_ERROR_STOP=1 --command=\"CREATE USER cu_clubs WITH PASSWORD 'ci-only' CREATEDB;\""
         su postgres -c "createdb --owner=cu_clubs cu_clubs_test"
+        apt-get clean
+        rm -rf /var/lib/apt/lists/*
     - name: Install locked tooling
       run: |
-        python -m pip install --disable-pip-version-check uv==0.13.7
+        python -m pip install --no-cache-dir --disable-pip-version-check uv==0.13.7
         cd source && uv sync --locked
     - run: cd source && uv run --frozen ruff check . && uv run --frozen ruff format --check . && python scripts/check_api_docs.py
         && uv run --frozen pytest

@@ -9,10 +9,10 @@ for Figma. The export contains CU Clubs events only, ordered by Moscow event
 time. Figma duplicates six mixed-layout frames and reflows the remaining events
 while preserving every event's content.
 
-This is the independent UX acceptance checklist, not a claim that the workflow
-has been implemented or runtime-tested. The current source review found no digest
-admin flow yet. The legacy weekly PNG digest is a separate flow and does not
-satisfy this export requirement.
+This is the independent UX acceptance checklist and source review. The admin
+flow and Figma plugin are implemented; live Telegram acceptance and a complete
+visual Figma run remain separate. The legacy weekly PNG digest is a separate
+flow and does not satisfy this export requirement.
 
 ## Acceptance criteria
 
@@ -70,12 +70,14 @@ review only; no Telegram runtime or Figma import was performed.
   the mode choice with same-week selections retained, all-mode exact-set
   comparison is performed during the snapshot, and empty states have neutral
   copy plus a direct week-change action.
-- The 500-event limit has a recovery gap in the current source: selecting
-  **«Все открытые встречи»** over the limit raises a validation error that the
-  generic dispatcher handles by leaving the digest flow. Keep the admin on the
-  mode screen and offer **«Выбрать вручную»** directly.
+- The initial 500-event recovery finding is resolved: an oversized all-events
+  selection stays on the mode screen with a manual-selection action. Reaching
+  the manual cap retains the current page and checked items. A PostgreSQL test
+  covers both recovery paths.
 
 The source review is otherwise acceptable for the reviewed routes and state
-retention. The 500-event recovery remains open. No Telegram runtime, generated
-JSON readback, six-frame Figma behavior, or Figma import was tested by this
-review; source acceptance does not establish those outcomes.
+retention. Independent review did not test Telegram runtime or a complete Figma
+import. Separately, the lead verified 397 Python tests, 13 Node tests, strict
+TypeScript compilation, successful plugin build, and the real six-frame source
+analyzer (26 club rows, 11 other rows, 35 calendar dates). These checks do not
+establish final visual acceptance in the Figma editor.
