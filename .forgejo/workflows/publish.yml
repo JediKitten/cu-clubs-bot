@@ -42,8 +42,20 @@ jobs:
       run: |
         python -m pip install --no-cache-dir --disable-pip-version-check uv==0.13.7
         cd source && uv sync --locked
-    - run: cd source && uv run --frozen ruff check . && uv run --frozen ruff format --check . && python scripts/check_api_docs.py
-        && uv run --frozen pytest
+    - name: Check source and stop at the first test error
+      run: |
+        df -h / /workspace /var/lib/postgresql
+        cd source
+        uv run --frozen ruff check .
+        uv run --frozen ruff format --check .
+        python scripts/check_api_docs.py
+        uv run --frozen pytest -x --tb=short
+    - name: Diagnose failed isolated test environment
+      if: failure()
+      run: |
+        df -h / /workspace /var/lib/postgresql
+        df -i / /workspace /var/lib/postgresql
+        tail -n 30 /var/log/postgresql/postgresql-*-main.log 2>/dev/null || true
     defaults:
       run:
         shell: sh
