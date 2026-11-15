@@ -1,13 +1,14 @@
 name: Check, publish and propose deployment
-on:
+'on':
   push:
-    branches: [main]
-  pull_request:
-  workflow_dispatch:
+    branches:
+    - main
+  pull_request: ''
+  workflow_dispatch: ''
 jobs:
   check:
     runs-on: homelab-docker
-    container: ghcr.io/catthehacker/ubuntu:act-24.04
+    container: python:3.12-slim
     services:
       postgres:
         image: postgres:17
@@ -15,62 +16,98 @@ jobs:
           POSTGRES_USER: cu_clubs
           POSTGRES_PASSWORD: ci-only
           POSTGRES_DB: cu_clubs_test
-        options: >-
-          --health-cmd "pg_isready -U cu_clubs -d cu_clubs_test"
-          --health-interval 5s --health-timeout 3s --health-retries 10
+        options: --health-cmd "pg_isready -U cu_clubs -d cu_clubs_test" --health-interval 5s --health-timeout 3s
+          --health-retries 10
     env:
       TEST_DATABASE_URL: postgresql+psycopg://cu_clubs:ci-only@postgres:5432/cu_clubs_test
     steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - uses: astral-sh/setup-uv@v6
-        with:
-          version: "0.13.7"
-          python-version: "3.12"
-          enable-cache: false
-      - run: uv sync --locked
-      - run: uv run --frozen ruff check .
-      - run: uv run --frozen ruff format --check .
-      - run: python3 scripts/check_api_docs.py
-      - run: uv run --frozen pytest
+    - name: Checkout exact source revision without stored credentials
+      env:
+        CHECKOUT_SHA: ${{ github.sha }}
+      run: 'apt-get update && apt-get install --no-install-recommends -y git ca-certificates
+
+        git init source
+
+        git -C source remote add origin https://git.cu3rd.ru/Jedi_kitten/cu-clubs-bot.git
+
+        git -C source fetch --no-tags --depth 1 origin "$CHECKOUT_SHA"
+
+        git -C source checkout --detach FETCH_HEAD
+
+        '
+    - name: Install locked tooling
+      run: 'python -m pip install --disable-pip-version-check uv==0.13.7
+
+        cd source && uv sync --locked
+
+        '
+    - run: cd source && uv run --frozen ruff check . && uv run --frozen ruff format --check . && python scripts/check_api_docs.py
+        && uv run --frozen pytest
+    defaults:
+      run:
+        shell: sh
   publish:
     needs: check
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: homelab-docker
-    container: ghcr.io/catthehacker/ubuntu:act-24.04
+    container: docker:27-cli
     steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - name: Publish self-service image
-        env:
-          REGISTRY_USER: ${{ vars.REGISTRY_USER || github.repository_owner }}
-          REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN || github.token }}
-          IMAGE_TAG: ${{ github.sha }}
-          SOURCE_REPO: ${{ github.repository }}
-        run: |
-          set -eu
-          image="git.cu3rd.ru/$(printf '%s' "$SOURCE_REPO" | tr '[:upper:]' '[:lower:]')"
-          export DOCKER_CONFIG
-          DOCKER_CONFIG=$(mktemp -d)
-          trap 'rm -rf "$DOCKER_CONFIG"' EXIT
-          printf '%s' "$REGISTRY_TOKEN" | docker login git.cu3rd.ru --username "$REGISTRY_USER" --password-stdin
-          docker build --target selfservice -t "$image:$IMAGE_TAG" .
-          docker push "$image:$IMAGE_TAG"
+    - name: Checkout exact source revision
+      env:
+        CHECKOUT_SHA: ${{ github.sha }}
+      run: 'apk add --no-cache git ca-certificates
+
+        git init source
+
+        git -C source remote add origin https://git.cu3rd.ru/Jedi_kitten/cu-clubs-bot.git
+
+        git -C source fetch --no-tags --depth 1 origin "$CHECKOUT_SHA"
+
+        git -C source checkout --detach FETCH_HEAD
+
+        '
+    - name: Publish self-service image
+      env:
+        REGISTRY_USER: ${{ vars.REGISTRY_USER || github.repository_owner }}
+        REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN || github.token }}
+        IMAGE_TAG: ${{ github.sha }}
+        SOURCE_REPO: ${{ github.repository }}
+      run: 'set -eu
+
+        image="git.cu3rd.ru/$(printf ''%s'' "$SOURCE_REPO" | tr ''[:upper:]'' ''[:lower:]'')"
+
+        export DOCKER_CONFIG
+
+        DOCKER_CONFIG=$(mktemp -d)
+
+        trap ''rm -rf "$DOCKER_CONFIG"'' EXIT
+
+        printf ''%s'' "$REGISTRY_TOKEN" | docker login git.cu3rd.ru --username "$REGISTRY_USER" --password-stdin
+
+        docker build --target selfservice -t "$image:$IMAGE_TAG" source
+
+        docker push "$image:$IMAGE_TAG"
+
+        '
+    defaults:
+      run:
+        shell: sh
   deliver:
     needs: publish
     runs-on: homelab-docker
     enable-openid-connect: true
-    container: ghcr.io/catthehacker/ubuntu:act-24.04
+    container: node:22-bookworm
     steps:
-      - name: Propose reviewed deployment
-        uses: https://git.cu3rd.ru/cu3rd/self-service/actions/deploy@52e5e58342d6af391c8cbb98710215289f5e052d
-        with:
-          project: cu-clubs-bot
-          environment: test
-          app: api
-          tag: ${{ github.sha }}
-          secrets-json: ${{ toJSON(secrets) }}
-          variables-json: ${{ toJSON(vars) }}
-          delivery-token: ${{ secrets.SELF_SERVICE_DELIVERY_TOKEN }}
+    - name: Prepare delivery tooling
+      run: apt-get update && apt-get install --no-install-recommends -y python3-pip
+    - name: Propose reviewed deployment
+      uses: https://git.cu3rd.ru/cu3rd/self-service/actions/deploy@52e5e58342d6af391c8cbb98710215289f5e052d
+      with:
+        project: cu-clubs-bot
+        environment: test
+        app: api
+        tag: ${{ github.sha }}
+        secrets-json: ${{ toJSON(secrets) }}
+        variables-json: ${{ toJSON(vars) }}
+        delivery-token: ${{ secrets.SELF_SERVICE_DELIVERY_TOKEN }}
+    if: vars.SELF_SERVICE_DELIVERY_READY == 'true'
