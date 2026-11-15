@@ -127,3 +127,10 @@ SMTP отложен: нового студента нельзя фиктивно
 | `POST` | `/api/v1/webhook-endpoints` |
 | `DELETE` | `/api/v1/webhook-endpoints/{endpoint_id}` |
 <!-- api-routes:end -->
+
+
+Перенос, сверка 15 ноября: проверенный образ опубликован, но
+[PR self-service №206](https://git.cu3rd.ru/cu3rd/self-service/pulls/206)
+ещё открыт. `https://clubs-api.cu3rd.ru` пока не проходит приёмку TLS;
+используйте действующий доступ через сервер/SSH-туннель. Новый адрес станет
+рабочим только после запуска контейнера, восстановления данных и проверки API.
