@@ -1,5 +1,6 @@
 .git
 .venv
+.uv-cache
 .env
 .env.*
 __pycache__

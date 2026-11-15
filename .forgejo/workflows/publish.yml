@@ -32,6 +32,11 @@ jobs:
         apt-get install --no-install-recommends -y postgresql postgresql-client
         pg_version=$(pg_lsclusters --no-header | awk '$2 == "main" {print $1}')
         test -n "$pg_version"
+        # Bound WAL for this disposable CI cluster; retain normal fsync/durability.
+        pg_conftool "$pg_version" main set min_wal_size 32MB
+        pg_conftool "$pg_version" main set max_wal_size 64MB
+        pg_conftool "$pg_version" main set checkpoint_timeout 30s
+        pg_conftool "$pg_version" main set wal_compression on
         pg_ctlcluster "$pg_version" main status >/dev/null 2>&1 || pg_ctlcluster "$pg_version" main start
         pg_isready --host=127.0.0.1 --port=5432
         su postgres -c "psql --set=ON_ERROR_STOP=1 --command=\"CREATE USER cu_clubs WITH PASSWORD 'ci-only' CREATEDB;\""
@@ -41,7 +46,9 @@ jobs:
     - name: Install locked tooling
       run: |
         python -m pip install --no-cache-dir --disable-pip-version-check uv==0.13.7
-        cd source && uv sync --locked
+        cd source
+        uv sync --locked
+        uv cache clean
     - name: Check source and stop at the first test error
       run: |
         df -h / /workspace /var/lib/postgresql
