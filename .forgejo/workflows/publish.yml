@@ -3,8 +3,8 @@ name: Check, publish and propose deployment
   push:
     branches:
     - main
-  pull_request: ''
-  workflow_dispatch: ''
+  pull_request: {}
+  workflow_dispatch: {}
 jobs:
   check:
     runs-on: homelab-docker
@@ -24,23 +24,16 @@ jobs:
     - name: Checkout exact source revision without stored credentials
       env:
         CHECKOUT_SHA: ${{ github.sha }}
-      run: 'apt-get update && apt-get install --no-install-recommends -y git ca-certificates
-
+      run: |
+        apt-get update && apt-get install --no-install-recommends -y git ca-certificates
         git init source
-
         git -C source remote add origin https://git.cu3rd.ru/Jedi_kitten/cu-clubs-bot.git
-
         git -C source fetch --no-tags --depth 1 origin "$CHECKOUT_SHA"
-
         git -C source checkout --detach FETCH_HEAD
-
-        '
     - name: Install locked tooling
-      run: 'python -m pip install --disable-pip-version-check uv==0.13.7
-
+      run: |
+        python -m pip install --disable-pip-version-check uv==0.13.7
         cd source && uv sync --locked
-
-        '
     - run: cd source && uv run --frozen ruff check . && uv run --frozen ruff format --check . && python scripts/check_api_docs.py
         && uv run --frozen pytest
     defaults:
@@ -55,40 +48,27 @@ jobs:
     - name: Checkout exact source revision
       env:
         CHECKOUT_SHA: ${{ github.sha }}
-      run: 'apk add --no-cache git ca-certificates
-
+      run: |
+        apk add --no-cache git ca-certificates
         git init source
-
         git -C source remote add origin https://git.cu3rd.ru/Jedi_kitten/cu-clubs-bot.git
-
         git -C source fetch --no-tags --depth 1 origin "$CHECKOUT_SHA"
-
         git -C source checkout --detach FETCH_HEAD
-
-        '
     - name: Publish self-service image
       env:
         REGISTRY_USER: ${{ vars.REGISTRY_USER || github.repository_owner }}
         REGISTRY_TOKEN: ${{ secrets.REGISTRY_TOKEN || github.token }}
         IMAGE_TAG: ${{ github.sha }}
         SOURCE_REPO: ${{ github.repository }}
-      run: 'set -eu
-
-        image="git.cu3rd.ru/$(printf ''%s'' "$SOURCE_REPO" | tr ''[:upper:]'' ''[:lower:]'')"
-
+      run: |
+        set -eu
+        image="git.cu3rd.ru/$(printf '%s' "$SOURCE_REPO" | tr '[:upper:]' '[:lower:]')"
         export DOCKER_CONFIG
-
         DOCKER_CONFIG=$(mktemp -d)
-
-        trap ''rm -rf "$DOCKER_CONFIG"'' EXIT
-
-        printf ''%s'' "$REGISTRY_TOKEN" | docker login git.cu3rd.ru --username "$REGISTRY_USER" --password-stdin
-
+        trap 'rm -rf "$DOCKER_CONFIG"' EXIT
+        printf '%s' "$REGISTRY_TOKEN" | docker login git.cu3rd.ru --username "$REGISTRY_USER" --password-stdin
         docker build --target selfservice -t "$image:$IMAGE_TAG" source
-
         docker push "$image:$IMAGE_TAG"
-
-        '
     defaults:
       run:
         shell: sh
