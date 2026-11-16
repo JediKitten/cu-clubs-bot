@@ -140,6 +140,8 @@ def main():
             subprocess.run(
                 ["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", str(host_key)], check=True
             )
+        # fsGroup тома при каждом монтировании делает ключ 0660, а sshd такой ключ отвергает.
+        host_key.chmod(0o600)
         commands.append(["/usr/sbin/sshd", "-D", "-e", "-f", "/app/deploy/sshd_config"])
     return supervise(commands, env)
 
