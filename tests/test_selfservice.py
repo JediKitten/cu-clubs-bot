@@ -167,7 +167,9 @@ def test_main_restores_private_host_key_mode(tmp_path, monkeypatch):
     monkeypatch.setattr(runtime, "DATA", tmp_path)
     monkeypatch.setattr(runtime, "prepare_environment", lambda env: {})
     monkeypatch.setattr(runtime.subprocess, "Popen", lambda *args, **kwargs: Migration())
-    monkeypatch.setattr(runtime, "supervise", lambda commands, env: supervised.append(commands) or 0)
+    monkeypatch.setattr(
+        runtime, "supervise", lambda commands, env: supervised.append(commands) or 0
+    )
     assert runtime.main() == 0
     assert host_key.stat().st_mode & 0o777 == 0o600
     assert supervised[0][-1][0] == "/usr/sbin/sshd"
