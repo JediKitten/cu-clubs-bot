@@ -149,3 +149,27 @@ def test_restore_preserves_ssl_configuration(tmp_path, monkeypatch):
     )
     assert calls[0]["env"]["PGSSLMODE"] == "verify-full"
     assert calls[0]["env"]["PGSSLROOTCERT"] == "/data/ca.crt"
+
+
+def test_main_restores_private_host_key_mode(tmp_path, monkeypatch):
+    runtime = module("selfservice")
+    host_key = tmp_path / "ssh_host_ed25519_key"
+    host_key.write_text("key")
+    host_key.chmod(0o660)
+
+    class Migration:
+        pid = 0
+
+        def wait(self):
+            return 0
+
+    supervised = []
+    monkeypatch.setattr(runtime, "DATA", tmp_path)
+    monkeypatch.setattr(runtime, "prepare_environment", lambda env: {})
+    monkeypatch.setattr(runtime.subprocess, "Popen", lambda *args, **kwargs: Migration())
+    monkeypatch.setattr(
+        runtime, "supervise", lambda commands, env: supervised.append(commands) or 0
+    )
+    assert runtime.main() == 0
+    assert host_key.stat().st_mode & 0o777 == 0o600
+    assert supervised[0][-1][0] == "/usr/sbin/sshd"
