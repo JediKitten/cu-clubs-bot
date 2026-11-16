@@ -1,0 +1,87 @@
+name: Switch worker on the current published image
+'on':
+  workflow_dispatch:
+    inputs:
+      worker:
+        description: Enable only after the old worker is stopped and the target database is ready
+        required: true
+        type: choice
+        default: 'false'
+        options:
+        - 'false'
+        - 'true'
+jobs:
+  deliver:
+    if: >-
+      vars.SELF_SERVICE_DELIVERY_READY == 'true' &&
+      github.repository == 'Jedi_kitten/cu-clubs-bot' &&
+      github.event_name == 'workflow_dispatch' &&
+      github.ref == 'refs/heads/main'
+    runs-on: homelab-docker
+    enable-openid-connect: true
+    container: python:3.12-slim
+    timeout-minutes: 5
+    steps:
+    - name: Checkout current platform delivery without stored credentials
+      run: |
+        set -eu
+        apt-get update && apt-get install --no-install-recommends -y git ca-certificates
+        git init platform
+        git -C platform remote add origin https://git.cu3rd.ru/cu3rd/self-service.git
+        git -C platform fetch --no-tags --depth 1 origin refs/heads/master
+        git -C platform checkout --detach FETCH_HEAD
+    - name: Install platform-pinned validation dependencies outside the checkouts
+      run: |
+        set -eu
+        python -m pip install --no-cache-dir --disable-pip-version-check --only-binary=:all: \
+          --target "$RUNNER_TEMP/cu-clubs-delivery-python" -r platform/requirements.txt
+    - name: Read and validate only the currently deployed image tag
+      run: |
+        set -eu
+        export PYTHONPATH="$RUNNER_TEMP/cu-clubs-delivery-python"
+        export PYTHONDONTWRITEBYTECODE=1
+        python - <<'PY'
+        import os
+        import re
+        import sys
+        from pathlib import Path
+
+        sys.path.insert(0, str(Path('platform/scripts').resolve()))
+        from config import load, projects, validate_delivery
+
+        app = projects(Path('platform'))['cu-clubs-bot']['envs']['test']['apps']['api']
+        delivery = load('platform/deployments/cu-clubs-bot/test/api.yaml')
+        validate_delivery(delivery, app)
+        tag = delivery['tag']
+        if delivery['repository'] != 'Jedi_kitten/cu-clubs-bot' or not re.fullmatch(r'[0-9a-f]{40}', tag):
+            raise SystemExit('Current delivery must use the application repository and a full commit SHA')
+        with open(os.environ['GITHUB_ENV'], 'a') as stream:
+            stream.write('CURRENT_DELIVERY_TAG=' + tag + '\n')
+        PY
+    - name: Checkout that exact source commit and verify it belongs to main
+      run: |
+        set -eu
+        git init source
+        git -C source remote add origin https://git.cu3rd.ru/Jedi_kitten/cu-clubs-bot.git
+        git -C source fetch --no-tags origin refs/heads/main:refs/remotes/origin/main
+        git -C source fetch --no-tags origin "$CURRENT_DELIVERY_TAG"
+        git -C source merge-base --is-ancestor "$CURRENT_DELIVERY_TAG" refs/remotes/origin/main
+        git -C source checkout --detach "$CURRENT_DELIVERY_TAG"
+    - name: Propose only the worker flag while preserving the image and sealed settings
+      env:
+        DELIVERY_TOKEN: ${{ secrets.SELF_SERVICE_DELIVERY_TOKEN }}
+        SOURCE_REPOSITORY: ${{ github.repository }}
+        SOURCE_REF: ${{ github.ref }}
+        SOURCE_EVENT: ${{ github.event_name }}
+        SOURCE_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        SELF_SERVICE_WORKER_ENABLED: ${{ github.event.inputs.worker }}
+      run: |
+        set -eu
+        case "$SELF_SERVICE_WORKER_ENABLED" in true|false) ;; *) exit 1 ;; esac
+        export SOURCE_SHA="$CURRENT_DELIVERY_TAG"
+        export PYTHONPATH="$RUNNER_TEMP/cu-clubs-delivery-python"
+        export PYTHONDONTWRITEBYTECODE=1
+        python source/scripts/deliver_selfservice.py --root platform --source-root source
+    defaults:
+      run:
+        shell: sh
