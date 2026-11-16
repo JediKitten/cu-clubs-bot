@@ -37,6 +37,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 "cu_clubs.legacy" = ["resources/*"]
+"cu_clubs" = ["faq_resources/*.json", "media/resources/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

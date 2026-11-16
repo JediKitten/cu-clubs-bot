@@ -101,20 +101,49 @@ jobs:
         shell: sh
   deliver:
     needs: publish
+    if: >-
+      vars.SELF_SERVICE_DELIVERY_READY == 'true' &&
+      github.repository == 'Jedi_kitten/cu-clubs-bot' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch') &&
+      github.ref == 'refs/heads/main'
     runs-on: homelab-docker
     enable-openid-connect: true
-    container: node:22-bookworm
+    container: python:3.12-slim
+    timeout-minutes: 5
     steps:
-    - name: Prepare delivery tooling
-      run: apt-get update && apt-get install --no-install-recommends -y python3-pip
-    - name: Propose reviewed deployment
-      uses: https://git.cu3rd.ru/cu3rd/self-service/actions/deploy@52e5e58342d6af391c8cbb98710215289f5e052d
-      with:
-        project: cu-clubs-bot
-        environment: test
-        app: api
-        tag: ${{ github.sha }}
-        secrets-json: ${{ toJSON(secrets) }}
-        variables-json: ${{ toJSON(vars) }}
-        delivery-token: ${{ secrets.SELF_SERVICE_DELIVERY_TOKEN }}
-    if: vars.SELF_SERVICE_DELIVERY_READY == 'true'
+    - name: Checkout source job revision and current platform snapshot
+      env:
+        CHECKOUT_SHA: ${{ github.sha }}
+      run: |
+        set -eu
+        apt-get update && apt-get install --no-install-recommends -y git ca-certificates
+        git init source
+        git -C source remote add origin https://git.cu3rd.ru/Jedi_kitten/cu-clubs-bot.git
+        git -C source fetch --no-tags --depth 1 origin "$CHECKOUT_SHA"
+        git -C source checkout --detach FETCH_HEAD
+        git init platform
+        git -C platform remote add origin https://git.cu3rd.ru/cu3rd/self-service.git
+        git -C platform fetch --no-tags --depth 1 origin refs/heads/master
+        git -C platform checkout --detach FETCH_HEAD
+    - name: Install platform-pinned validation dependencies outside the checkouts
+      run: |
+        set -eu
+        python -m pip install --no-cache-dir --disable-pip-version-check --only-binary=:all: \
+          --target "$RUNNER_TEMP/cu-clubs-delivery-python" -r platform/requirements.txt
+    - name: Propose image tag while preserving reviewed sealed configuration
+      env:
+        DELIVERY_TOKEN: ${{ secrets.SELF_SERVICE_DELIVERY_TOKEN }}
+        SOURCE_REPOSITORY: ${{ github.repository }}
+        SOURCE_REF: ${{ github.ref }}
+        SOURCE_EVENT: ${{ github.event_name }}
+        SOURCE_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        SOURCE_SHA: ${{ github.sha }}
+        SELF_SERVICE_WORKER_ENABLED: ${{ vars.SELF_SERVICE_WORKER_ENABLED }}
+      run: |
+        set -eu
+        export PYTHONPATH="$RUNNER_TEMP/cu-clubs-delivery-python"
+        export PYTHONDONTWRITEBYTECODE=1
+        python source/scripts/deliver_selfservice.py --root platform --source-root source
+    defaults:
+      run:
+        shell: sh

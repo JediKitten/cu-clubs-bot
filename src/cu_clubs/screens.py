@@ -23,7 +23,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import Mapped, mapped_column
 
-from cu_clubs import legacy
+from cu_clubs import legacy, media
 from cu_clubs.models import Base, Outbox
 
 PAGE_PREFIX = "screen:page:"
@@ -77,6 +77,9 @@ def _pages(value: str, *, photo: bool) -> list[str]:
     parser.feed(value)
     parser.close()
     visible = "".join(parser.parts)
+    # Telegram counts characters after parsing entities; link URLs are not visible text.
+    if _units(visible) <= (1000 if photo else 3900):
+        return [value]
     limit = 900 if photo else 3700
     pages, chunk, size = [], [], 0
     for char in visible:
@@ -133,7 +136,7 @@ def _original_banner(photo: Any, role: str | None) -> bool:
     if not role or not isinstance(photo, BufferedInputFile):
         return False
     try:
-        return photo.data == legacy.banner(role).data
+        return media.is_banner(photo, role) or photo.data == legacy.banner(role).data
     except ValueError:
         return False
 
@@ -388,7 +391,10 @@ class ScreenManager:
             screen.page_index = index
             photo = screen.photo_file_id
             if screen.kind == "photo" and photo is None and screen.banner_role:
-                photo = legacy.banner(screen.banner_role)
+                try:
+                    photo = media.banner(screen.banner_role)
+                except ValueError:
+                    photo = legacy.banner(screen.banner_role)
             result = await self._render(screen, photo, screen.kind)
             if result is not None and not isinstance(result, bool):
                 screen.message_id = result.message_id

@@ -412,6 +412,8 @@ def test_event_ui_wizard_collaboration_and_registration_buttons_fit_telegram(ses
         await route(f"evchoice:{state.payload['token']}:no")
         await route(f"evchoice:{state.payload['token']}:yes")
         screen = await route(f"evchoice:{state.payload['token']}:open")
+        assert "контакт ответственного" in screen.text
+        screen = await route(f"evchoice:{state.payload['token']}:skip")
         assert state.state == "idle"
         assert "Черновик" in screen.text
         screen = await route(f"evpartner:{public_id}")

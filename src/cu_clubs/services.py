@@ -323,6 +323,37 @@ class ClubService:
         await self.session.flush()
         return self._dto(club)
 
+    async def update_profile_fields(
+        self,
+        telegram_id: int,
+        public_id: str,
+        fields: dict,
+        *,
+        expected_version: int,
+    ) -> dict:
+        """Apply an explicitly confirmed profile batch with all-or-nothing writes.
+
+        Each field reuses the existing shared validation, authorization and audit.
+        A savepoint protects callers that keep the draft after a later field fails.
+        Public team is descriptive; organizer memberships/rights are not writable.
+        """
+        allowed = {"name", "description", "channel", "cover", "public_team", "direction"}
+        if type(expected_version) is not int or expected_version <= 0:
+            raise ValidationError("Нужна актуальная версия карточки клуба.")
+        if not isinstance(fields, dict) or not fields or fields.keys() - allowed:
+            raise ValidationError("Выбери изменяемые поля профиля клуба.")
+        async with self.session.begin_nested():
+            club = await self._club(public_id, lock=True)
+            await self.authorize(telegram_id, public_id, "edit_profile")
+            if club.version != expected_version:
+                raise ValidationError("Карточка изменилась. Открой актуальную версию")
+            result = self._dto(club)
+            for field, value in fields.items():
+                result = await self.update_club(
+                    telegram_id, public_id, field, value, expected_version=result["version"]
+                )
+        return result
+
     @staticmethod
     def _validate_url(value: str) -> None:
         try:

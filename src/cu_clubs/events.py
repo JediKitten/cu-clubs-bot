@@ -30,6 +30,7 @@ EDIT_FIELDS = {
     "title",
     "description",
     "post_registration_text",
+    "public_contact",
     "starts_at",
     "ends_at",
     "registration_deadline",
@@ -101,6 +102,7 @@ def validate_fields(fields: dict, current: Event | None = None, *, complete=Fals
             "title": "",
             "description": "",
             "post_registration_text": "",
+            "public_contact": "",
             "starts_at": None,
             "ends_at": None,
             "registration_deadline": None,
@@ -121,12 +123,15 @@ def validate_fields(fields: dict, current: Event | None = None, *, complete=Fals
         "title": 45,
         "description": 250,
         "post_registration_text": 150,
+        "public_contact": 300,
         "venue_details": 2000,
     }.items():
         value = candidate[key]
         if not isinstance(value, str) or len(value.strip()) > limit:
             raise ValidationError(f"Некорректное значение поля {key}; максимум {limit} символов.")
         candidate[key] = value.strip()
+    if any(ord(char) < 32 and char not in "\n\t" for char in candidate["public_contact"]):
+        raise ValidationError("Контакт содержит недопустимые управляющие символы.")
     if candidate["title"] and len(candidate["title"]) < 5:
         raise ValidationError("Название мероприятия должно содержать от 5 до 45 символов.")
     if candidate["post_registration_text"] and len(candidate["post_registration_text"]) < 10:
@@ -250,6 +255,14 @@ class EventService:
         registration = await self._registration(event, actor_id)
         if registration is not None and registration.status == "active":
             return
+        # Actual visitors retain access to their own history, even without an
+        # advance registration (QR/manual/import all share the same attendance).
+        if actor_id is not None and event.status in {"published", "held", "cancelled"}:
+            from cu_clubs.attendance_models import Attendance
+
+            account = await self.clubs._account(actor_id)
+            if account and await self.session.get(Attendance, (event.id, account.person_id)):
+                return
         if event.status in {"published", "held", "cancelled"} and (
             event.visibility == "open" or via_link
         ):

@@ -18,7 +18,7 @@ from aiogram.methods import (
 )
 from aiogram.types import BufferedInputFile, Update, User
 
-from cu_clubs import legacy, telegram
+from cu_clubs import media, telegram
 from cu_clubs.services import PermissionDenied, ValidationError
 
 
@@ -350,10 +350,14 @@ def test_navigation_subscription_share_and_honest_profile(interaction):
             for button in row
         )
         await i.send(callback="clubs", user_id=104)
+        assert isinstance(i.bot.last, SendPhoto)
+        assert i.bot.last.photo.data == media.banner("clubs").data
         assert i.bot.action("club:") == "club:cinema"
         await i.send(text="/start c_cinema", user_id=104)
         assert "Киноклуб" in i.bot.last_text
         await i.send(callback=i.bot.action("subscribe:"), user_id=104)
+        # The role cache proves subscribe: resolves to the existing clubs artwork.
+        assert isinstance(i.bot.last.photo, str)
         assert 104 in i.db.subscriptions
         assert i.bot.last_text.startswith("Клуб: <b>Киноклуб</b>\nПодписка включена\n")
         await i.send(callback="club:cinema", user_id=104)
@@ -399,12 +403,12 @@ def test_navigation_subscription_share_and_honest_profile(interaction):
         ),
         (
             {"callback": "editmenu:cinema"},
-            "club-owner",
+            "club_settings",
             "<b>Настройка профиля клуба</b>\n\nКиноклуб",
         ),
         (
             {"callback": "edit:cinema:name"},
-            "club-owner",
+            "club_settings",
             "<b>Введите название клуба</b>",
         ),
         (
@@ -414,10 +418,10 @@ def test_navigation_subscription_share_and_honest_profile(interaction):
             "\n\nПочта не подтверждена.",
         ),
         ({"callback": "future:events"}, "events", telegram.UNAVAILABLE),
-        ({"callback": "future:mine"}, "personal-account", telegram.UNAVAILABLE),
+        ({"callback": "future:mine"}, "my_events", telegram.UNAVAILABLE),
     ],
 )
-def test_shared_screens_send_original_banner_and_exact_caption(interaction, update, role, caption):
+def test_shared_screens_send_active_banner_and_exact_caption(interaction, update, role, caption):
     async def scenario():
         i = interaction
         await i.send(**update)
@@ -426,7 +430,7 @@ def test_shared_screens_send_original_banner_and_exact_caption(interaction, upda
         assert isinstance(method, SendPhoto)
         assert isinstance(method.photo, BufferedInputFile)
         assert method.photo.filename == f"{role}.png"
-        assert method.photo.data == legacy.banner(role).data
+        assert method.photo.data == media.banner(role).data
         assert method.caption == caption
         assert method.parse_mode == "HTML"
         assert method.reply_markup

@@ -53,10 +53,11 @@ def test_http_create_edit_publish_invite_register_and_cancel(runtime_database_ur
         created = client.post(
             "/api/v1/events",
             headers={**headers, "Idempotency-Key": "create-workflow"},
-            json=payload(),
+            json=payload(public_contact="@calendar_public_contact"),
         )
         assert created.status_code == 201, created.text
         draft = created.json()
+        assert draft["public_contact"] == "@calendar_public_contact"
         path = "/api/v1/events/" + draft["id"]
         fetched = client.get(path, headers=headers)
         assert fetched.status_code == 200 and fetched.headers["ETag"] == f'"{draft["version"]}"'
@@ -70,6 +71,7 @@ def test_http_create_edit_publish_invite_register_and_cancel(runtime_database_ur
             json={"description": "Updated workflow description"},
         )
         assert edited.status_code == 200, edited.text
+        assert edited.json()["public_contact"] == "@calendar_public_contact"
         public = client.post(
             path + "/publish",
             headers={

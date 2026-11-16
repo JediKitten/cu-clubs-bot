@@ -13,6 +13,10 @@ def self_registration_enabled(session):
 
 
 def can_register(session, person):
+    if getattr(session, "info", {}).get("yandex_auth_enabled"):
+        return (
+            person.kind == "student" and person.verified_at is not None and bool(person.time_login)
+        )
     if self_registration_enabled(session) and person.declared_category:
         return (
             person.declared_category in {"student", "staff"}

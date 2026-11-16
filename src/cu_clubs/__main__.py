@@ -69,6 +69,9 @@ def main() -> None:
     settings = Settings()
     try:
         if args.command == "api":
+            from cu_clubs.logging_privacy import OAuthQueryFilter
+
+            logging.getLogger("uvicorn.access").addFilter(OAuthQueryFilter())
             uvicorn.run(create_app(settings), host=settings.host, port=settings.port)
         elif args.command == "migrate":
             config = Config(str(Path.cwd() / "alembic.ini"))

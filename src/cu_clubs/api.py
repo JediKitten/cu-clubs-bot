@@ -76,6 +76,14 @@ class EventFields(Input):
     title: str | None = Field(default=None, max_length=45)
     description: str | None = Field(default=None, max_length=250)
     post_registration_text: str | None = Field(default=None, max_length=150)
+    public_contact: str = Field(
+        default="",
+        max_length=300,
+        description=(
+            "Explicit public organizer contact, visible to everyone with card access. "
+            "Never inferred from personal data. Empty string clears it."
+        ),
+    )
     starts_at: AwareDatetime | None = None
     ends_at: AwareDatetime | None = None
     registration_deadline: AwareDatetime | None = None
@@ -126,6 +134,7 @@ class EventOutput(BaseModel):
     id: str
     title: str
     description: str
+    public_contact: str = ""
     status: str
     visibility: str
     version: int
@@ -209,6 +218,7 @@ def event_dto(dto, *, private=False, personal=False):
         "public_id",
         "title",
         "description",
+        "public_contact",
         "status",
         "visibility",
         "version",

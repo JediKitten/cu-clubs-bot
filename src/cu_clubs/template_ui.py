@@ -15,6 +15,7 @@ FIELDS = {
     "title": ("Название встречи", "name"),
     "description": ("Описание", "desc"),
     "post_registration_text": ("После записи", "after"),
+    "public_contact": ("Ответственный: публичный контакт", "contact"),
     "start_time": ("Время начала", "clock"),
     "duration_minutes": ("Длительность", "duration"),
     "venue_type": ("Тип площадки", "venue"),
@@ -27,7 +28,7 @@ FIELDS = {
 }
 PAGE_SIZE = 15
 FIELD_GROUPS = (
-    ("Текст встречи", ("title", "description", "post_registration_text")),
+    ("Текст встречи", ("title", "description", "post_registration_text", "public_contact")),
     ("Время и площадка", ("start_time", "duration_minutes", "venue_type", "venue_details")),
     ("Участники и техника", ("capacity", "expected_attendance", "needs_talk")),
     ("Доступность", ("needs_microphones", "visibility")),
@@ -143,6 +144,10 @@ def _prompt(state):
         "title": legacy.text("input_event_name"),
         "description": legacy.text("input_event_description"),
         "post_registration_text": legacy.text("input_after_registration_text"),
+        "public_contact": (
+            "Укажи контакт ответственного до 300 символов. Его увидят все, кому доступна карточка"
+            " встречи. Добавляй только контакт, который можно публиковать."
+        ),
         "capacity": legacy.text("input_max_participants"),
         "expected_attendance": "Сколько людей ожидается? Для отсутствующего значения введи 0.",
         "start_time": (
@@ -172,6 +177,7 @@ def _prompt(state):
         "duration_minutes",
         "description",
         "post_registration_text",
+        "public_contact",
         "venue_details",
         "expected_attendance",
         "capacity",
@@ -189,7 +195,11 @@ def _prompt(state):
 
 def _parse(field, raw):
     if raw == "clear":
-        return "" if field in {"description", "post_registration_text", "venue_details"} else None
+        return (
+            ""
+            if field in {"description", "post_registration_text", "venue_details", "public_contact"}
+            else None
+        )
     if field in {"capacity", "expected_attendance", "duration_minutes"}:
         if raw == "0" and field != "duration_minutes":
             return None

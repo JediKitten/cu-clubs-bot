@@ -23,7 +23,7 @@ from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.engine import make_url
 
-from cu_clubs import legacy
+from cu_clubs import legacy, media
 from cu_clubs.config import Settings
 from cu_clubs.db import make_database
 from cu_clubs.identity import verification_delivery
@@ -270,7 +270,7 @@ async def deliver_domain_notice(sessions, bot: Bot, item: dict, settings: Settin
                 }[kind]
                 markup = keyboard([("Открыть встречу", f"event:{payload['event']}:link")])
             text = f"<b>{heading}</b>\n\n" + event_text(event)
-        role = "events"
+        role = "collaboration" if kind == "event.invitation" else "events"
     else:
         role = "club-owner"
         title = escape(payload["name"])
@@ -282,7 +282,7 @@ async def deliver_domain_notice(sessions, bot: Bot, item: dict, settings: Settin
         )
         markup = keyboard([("Открыть клуб", f"manageclub:{payload['public_id']}")])
     message_id = await ScreenManager(sessions, bot).show(
-        item["recipient"], text, markup, legacy.banner(role), banner_role=role, force_new=True
+        item["recipient"], text, markup, media.banner(role), banner_role=role, force_new=True
     )
     return SimpleNamespace(message_id=message_id)
 
@@ -339,8 +339,8 @@ async def process_outbox(sessions, bot: Bot, item: dict, settings: Settings) -> 
                     item["recipient"],
                     "Как прошла встреча?\n\n" + escape(target["title"]),
                     keyboard([("Оценить встречу", f"su:{target['event']}")]),
-                    legacy.banner("events"),
-                    banner_role="events",
+                    media.banner("survey_answer"),
+                    banner_role="survey_answer",
                     force_new=True,
                 )
                 result = SimpleNamespace(message_id=message_id)
@@ -360,8 +360,8 @@ async def process_outbox(sessions, bot: Bot, item: dict, settings: Settings) -> 
                 item["recipient"],
                 text,
                 keyboard([("Открыть встречу", f"event:{event['public_id']}")]),
-                legacy.banner("club-owner"),
-                banner_role="club-owner",
+                media.banner("calendar"),
+                banner_role="calendar",
                 force_new=True,
             )
             result = SimpleNamespace(message_id=msg)

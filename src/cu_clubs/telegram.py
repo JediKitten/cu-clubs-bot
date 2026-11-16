@@ -12,15 +12,17 @@ from aiogram.types import Update as AiogramUpdate
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 
-from cu_clubs import legacy
+from cu_clubs import legacy, media
 from cu_clubs.analytics_ui import handle_analytics
 from cu_clubs.api_ui import handle_integrations
 from cu_clubs.attendance_ui import handle_attendance
 from cu_clubs.calendar_ui import handle_calendar
 from cu_clubs.category_ui import category_gate
-from cu_clubs.club_card_ui import club_card_extras
+from cu_clubs.club_card_ui import ClubEditPresentation, club_card_extras
+from cu_clubs.club_edit_ui import handle_club_edits
 from cu_clubs.digest_ui import handle_digest
 from cu_clubs.event_ui import handle_events
+from cu_clubs.faq_ui import handle_faq
 from cu_clubs.identity_ui import handle_identity
 from cu_clubs.models import Conversation, TelegramUpdate
 from cu_clubs.notifications_ui import handle_notifications
@@ -348,7 +350,10 @@ async def _club_card(service: ClubService, user_id: int, public_id: str) -> tupl
                     f"subscribe:{public_id}:{0 if subscribed else 1}",
                 )
             ],
-            [("Поделиться", f"share:{public_id}"), ("Что даёт уровень?", "faq:levels")],
+            [
+                ("Поделиться", f"share:{public_id}"),
+                ("Что даёт уровень?", f"faq:context:levels:{public_id}"),
+            ],
             [(legacy.text("cu_clubs"), "clubs"), ("В меню", "menu")],
         ),
         club.get("cover"),
@@ -358,6 +363,7 @@ async def _club_card(service: ClubService, user_id: int, public_id: str) -> tupl
 async def _edit_menu(service: ClubService, user_id: int, public_id: str) -> tuple[str, Any]:
     club = await _profile_access(service, user_id, public_id)
     return legacy.text("profile_text") + f"\n\n{escape(club['name'])}", keyboard(
+        [("Изменить несколько полей", f"cb:start:{public_id}")],
         *[[(name, f"edit:{public_id}:{field}")] for field, name in FIELDS.items()],
         [("Посмотреть карточку", f"club:{public_id}")],
         [(legacy.text("back"), f"manageclub:{public_id}"), ("В меню", "menu")],
@@ -454,6 +460,7 @@ def build_dispatcher(sessionmaker: Any, settings: Any) -> Dispatcher:
         text = ""
         markup = None
         document = None
+        conversation_state_name = "idle"
         try:
             upload = await attendance_upload(sessionmaker, bot, user.id, message, settings)
             async with sessionmaker() as session, session.begin():
@@ -468,6 +475,7 @@ def build_dispatcher(sessionmaker: Any, settings: Any) -> Dispatcher:
                 service = ClubService(session)
                 person = await service.get_or_create_person(user.id, user.full_name, user.username)
                 state = await _conversation(session, user.id)
+                conversation_state_name = state.state
                 category = await category_gate(
                     session,
                     user.id,
@@ -521,9 +529,22 @@ def build_dispatcher(sessionmaker: Any, settings: Any) -> Dispatcher:
                         session, user.id, state, None, f"event:{command[1][2:]}:link", settings
                     )
                 elif not command or not command[0].startswith("/"):
-                    flow = await handle_identity(
-                        session, user.id, state, message, data, settings, person
-                    )
+                    flow = await handle_faq(session, user.id, state, data)
+                    if flow is None:
+                        flow = await handle_club_edits(
+                            session,
+                            user.id,
+                            state,
+                            message,
+                            data,
+                            ClubEditPresentation(
+                                FIELDS, DIRECTIONS, parse_value, _club_edit_hint, card_text
+                            ),
+                        )
+                    if flow is None:
+                        flow = await handle_identity(
+                            session, user.id, state, message, data, settings, person
+                        )
                     if flow is None:
                         flow = await handle_integrations(
                             session, user.id, state, message, data, settings
@@ -708,16 +729,6 @@ def build_dispatcher(sessionmaker: Any, settings: Any) -> Dispatcher:
                     markup = keyboard([("В меню", "menu")])
                 elif data.startswith("future:"):
                     text, markup = UNAVAILABLE, keyboard([("В меню", "menu")])
-                elif data in {"faq", "faq:levels"}:
-                    text = (
-                        "<b>Как пользоваться ботом</b>\nОткрой «Клубы ЦУ», чтобы найти карточку "
-                        "и подписаться на анонсы. В разделе «Мероприятия» можно выбрать встречу "
-                        "и записаться после подтверждения студенческой почты.\n\n"
-                        "<b>Уровни клубов</b>\nConcept → Pre-Seed → Seed → Pre-IPO → IPO. "
-                        "Уровень назначает администрация. Гостевой вход планируется от Seed; "
-                        "он пока не подключён."
-                    )
-                    markup = keyboard([(legacy.text("cu_clubs"), "clubs"), ("В меню", "menu")])
                 elif data.startswith("club:"):
                     text, markup, photo = await _club_card(service, user.id, data.split(":", 1)[1])
                 elif data.startswith("subscribe:"):
@@ -906,6 +917,7 @@ def build_dispatcher(sessionmaker: Any, settings: Any) -> Dispatcher:
                 else:
                     text = "Это действие уже завершено или устарело. Открой актуальный раздел."
                     markup = keyboard([("В меню", "menu")])
+                conversation_state_name = state.state
                 # Consume durable input in the SAME transaction as its business/state
                 # changes. A later Telegram failure must not apply a wizard answer
                 # again to its next field. The next user action can redraw the screen.
@@ -936,15 +948,20 @@ def build_dispatcher(sessionmaker: Any, settings: Any) -> Dispatcher:
                     [InlineKeyboardButton(text="Карточка клуба", callback_data=f"club:{share_id}")],
                 ]
             )
-        original_banner = photo is None and banner_role is not None
-        if original_banner:
-            photo = legacy.banner(banner_role)
+        banner_role = media.resolve_banner_role(
+            conversation_state=conversation_state_name,
+            callback_data=data if callback else None,
+            suggested_role=banner_role,
+        )
+        active_banner = photo is None and banner_role is not None
+        if active_banner:
+            photo = media.banner(banner_role)
         await manager.show(
             user.id,
             text,
             markup,
             photo,
-            banner_role=banner_role if original_banner else None,
+            banner_role=banner_role if active_banner else None,
             trigger=event,
         )
         if callback:

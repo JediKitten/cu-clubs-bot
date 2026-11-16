@@ -1,5 +1,7 @@
 """Public club-card additions; Telegram routing stays in the adapter."""
 
+from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from html import escape
 from zoneinfo import ZoneInfo
@@ -11,6 +13,17 @@ from cu_clubs.event_models import Event, EventClub
 from cu_clubs.models import Club
 
 MOSCOW = ZoneInfo("Europe/Moscow")
+
+
+@dataclass(frozen=True)
+class ClubEditPresentation:
+    """Reuse the existing exact copy, parser and card without adapter imports."""
+
+    fields: dict
+    directions: dict
+    parse_value: Callable
+    hint: Callable
+    card_text: Callable
 
 
 async def club_card_extras(

@@ -56,7 +56,8 @@ function normalizeEvent(raw) {
   const starts = localParts(start), ends = localParts(end);
   const title = requiredText(raw.title, 1000, 'название встречи');
   if (raw.description != null && (typeof raw.description !== 'string' || raw.description.length > 30000)) fail('Некорректное описание.');
-  const room = raw.room == null ? '' : requiredText(raw.room, 1000, 'место');
+  if (raw.room != null && (typeof raw.room !== 'string' || raw.room.length > 1000)) fail('Некорректное поле: место.');
+  const room = (raw.room || '').trim();
   // Deliberately project only public display fields, never copy arbitrary payload keys.
   return { id, version: raw.version, clubs, title, description: raw.description || '', room,
     public_url: safeUrl(raw.public_url), starts_at: new Date(start).toISOString(), ends_at: new Date(end).toISOString(),

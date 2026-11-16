@@ -25,5 +25,8 @@ def make_database(settings: Settings) -> tuple[AsyncEngine, async_sessionmaker[A
     return engine, async_sessionmaker(
         engine,
         expire_on_commit=False,
-        info={"test_self_registration_enabled": settings.test_self_registration_enabled},
+        info={
+            "test_self_registration_enabled": settings.test_self_registration_enabled,
+            "yandex_auth_enabled": settings.yandex_auth_enabled,
+        },
     )

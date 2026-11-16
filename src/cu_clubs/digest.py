@@ -2,7 +2,9 @@
 
 import json
 import re
+from collections import defaultdict
 from datetime import date, datetime, time, timedelta
+from html import escape
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
@@ -14,6 +16,72 @@ from cu_clubs.services import ClubService, PermissionDenied, ValidationError
 MOSCOW = ZoneInfo("Europe/Moscow")
 MAX_EVENTS = 500
 MAX_BYTES = 1_000_000
+ANNOUNCEMENTS_URL = "https://time.cu.ru/tsentralnyy-universitet/channels/anonsy-tsu"
+WEEKDAYS = ("Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье")
+
+
+def render_post(snapshot):
+    """The owner's post format, from the same reviewed snapshot as the cards."""
+    days = defaultdict(list)
+    for event in sorted(snapshot["events"], key=lambda e: (e["starts_at"], e["id"])):
+        start = datetime.fromisoformat(event["starts_at"]).astimezone(MOSCOW)
+        days[start.date()].append(event)
+    html, markdown, blocks = [], [], []
+    for day, events in sorted(days.items()):
+        heading = WEEKDAYS[day.weekday()] + ":"
+        lines = []
+        md_lines = []
+        visible = [heading]
+        for event in events:
+            label = " х ".join(club["name"] for club in event["clubs"])
+            url = event["public_url"]
+            lines.append(f'➡️ <a href="{escape(url, quote=True)}">{escape(label)}</a>')
+            md_label = re.sub(r"([\\\[\]*_`~])", r"\\\1", label)
+            md_lines.append(f"➡️ [{md_label}]({url})")
+            visible.append("➡️ " + label)
+        block = f"<b>{heading}</b>\n\n" + "\n".join(lines)
+        html.append(block)
+        markdown.append(f"**{heading}**\n\n" + "\n".join(md_lines))
+        blocks.append((heading, lines, visible))
+    footer_text = "P.S. Подробнее о каждом из мероприятий рассказываем в канале Анонсы ЦУ."
+    footer = (
+        "<i>P.S. Подробнее о каждом из мероприятий рассказываем в канале "
+        f'<a href="{ANNOUNCEMENTS_URL}">Анонсы ЦУ.</a></i>\n\n#<b>Дайджестсобытий</b>'
+    )
+    html.append(footer)
+    markdown.append(
+        f"*P.S. Подробнее о каждом из мероприятий рассказываем в канале "
+        f"[Анонсы ЦУ.]({ANNOUNCEMENTS_URL})*\n\n#**Дайджестсобытий**"
+    )
+    # Split only at whole event lines. Each UI page retains rich links and day context.
+    pages, current, units = [], [], 0
+
+    def length(value):
+        return len(value.encode("utf-16-le")) // 2
+
+    for heading, lines, visible in blocks:
+        for index, line in enumerate(lines):
+            prefix = f"<b>{heading}</b>\n\n" if index == 0 or not current else ""
+            cost = length((heading + "\n\n" if prefix else "") + visible[index + 1]) + 2
+            if current and units + cost > 3800:
+                pages.append("\n".join(current))
+                current, units = [], 0
+                prefix = f"<b>{heading}</b>\n\n"
+                cost = length(heading + "\n\n" + visible[index + 1]) + 2
+            if cost > 3800:
+                return "\n\n".join(html), "\n\n".join(markdown), []
+            if prefix and current:
+                current.append("")
+            current.append(prefix + line)
+            units += cost
+    if current and units + length(footer_text + "\n\n#Дайджестсобытий") + 4 > 3800:
+        pages.append("\n".join(current))
+        current = []
+    if current:
+        current.append("")
+    current.append(footer)
+    pages.append("\n".join(current))
+    return "\n\n".join(html), "\n\n".join(markdown), pages
 
 
 def week_bounds(value):

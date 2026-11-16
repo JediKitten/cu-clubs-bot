@@ -1,6 +1,6 @@
 """Meeting screens backed by the shared EventService and durable dialogue state."""
 
-from datetime import datetime, timedelta
+from datetime import datetime
 from html import escape
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
@@ -10,6 +10,7 @@ from aiogram.types import Message
 from cu_clubs import event_schedule_ui as schedule
 from cu_clubs import legacy
 from cu_clubs.access import can_register, self_registration_enabled
+from cu_clubs.calendar_user_ui import handle_user_calendar
 from cu_clubs.events import EventService
 from cu_clubs.models import Conversation
 from cu_clubs.services import ClubService, PermissionDenied, ValidationError
@@ -31,6 +32,7 @@ FIELDS = [
     "needs_talk",
     "needs_microphones",
     "visibility",
+    "public_contact",
 ]
 FIELD_CODES = {
     "title": "name",
@@ -47,6 +49,7 @@ FIELD_CODES = {
     "needs_talk": "talk",
     "needs_microphones": "mic",
     "visibility": "visibility",
+    "public_contact": "contact",
 }
 LABELS = {
     "title": "Название",
@@ -63,12 +66,16 @@ LABELS = {
     "needs_talk": "Толк",
     "needs_microphones": "Микрофоны",
     "visibility": "Доступность",
+    "public_contact": "Ответственный: публичный контакт",
 }
 EDIT_GROUPS = {
     "text": ("Название и описание", ("title", "description", "post_registration_text")),
     "time": ("Дата и время", ("starts_at", "ends_at", "registration_deadline")),
     "place": ("Место проведения", ("venue_type", "room", "venue_details")),
-    "people": ("Участники и доступ", ("capacity", "expected_attendance", "visibility")),
+    "people": (
+        "Участники и доступ",
+        ("capacity", "expected_attendance", "visibility", "public_contact"),
+    ),
     "tech": ("Техника", ("needs_talk", "needs_microphones")),
 }
 
@@ -140,6 +147,8 @@ def event_text(event: dict) -> str:
         text += f"\n<b>{status}</b>"
     if event.get("registered"):
         text += "\n" + legacy.text("registered")
+    if event.get("public_contact"):
+        text += "\n\n<b>Ответственный:</b> " + escape(event["public_contact"])
     if event.get("can_manage") or event.get("can_review"):
         text += (
             f"\n\nТолк: {'да' if event['needs_talk'] else 'нет'}"
@@ -154,8 +163,12 @@ def _screen(text, rows=None, *, role="events") -> Screen:
 
 
 def _reset(state):
-    origin = state.payload.get("club_origin")
-    state.state, state.payload = "idle", {"club_origin": origin} if origin else {}
+    origins = {
+        key: state.payload[key]
+        for key in ("club_origin", "calendar_origin")
+        if state.payload.get(key)
+    }
+    state.state, state.payload = "idle", origins
 
 
 async def _card(service, user_id, public_id, *, via_link=False) -> Screen:
@@ -205,6 +218,8 @@ async def _card(service, user_id, public_id, *, via_link=False) -> Screen:
             rows.insert(0, [("Оценить встречу", f"su:{public_id}")])
     if event["status"] in {"published", "held"}:
         rows.append([("Поделиться", f"evshare:{public_id}{suffix}")])
+    if event["status"] in {"published", "held", "cancelled"}:
+        rows.append([(legacy.text("event_export"), f"evics:{public_id}{suffix}")])
     for club in event["clubs"]:
         rows.append([(club["name"], f"club:{club['public_id']}")])
     state = await service.session.get(Conversation, user_id)
@@ -212,6 +227,8 @@ async def _card(service, user_id, public_id, *, via_link=False) -> Screen:
     back = (
         f"club:{origin}"
         if origin and any(club["public_id"] == origin for club in event["clubs"])
+        else state.payload.get("calendar_origin", "events")
+        if state
         else "events"
     )
     rows.append(
@@ -247,6 +264,11 @@ def _prompt(state, event) -> Screen:
         "needs_talk": "Нужен Толк?",
         "needs_microphones": "Нужны микрофоны?",
         "visibility": "Кто увидит встречу?",
+        "public_contact": (
+            "Укажи контакт ответственного: @тег, почту или другой способ связи (до 300 символов)."
+            "\nЭтот контакт увидят все, кому доступна карточка встречи."
+            " Добавляй только контакт, который можно публиковать."
+        ),
     }
     if field in {"needs_talk", "needs_microphones"}:
         rows.append([("Да", f"evchoice:{token}:yes"), ("Нет", f"evchoice:{token}:no")])
@@ -263,7 +285,13 @@ def _prompt(state, event) -> Screen:
             [("Открытая", f"evchoice:{token}:open")],
             [("Закрытая по ссылке", f"evchoice:{token}:closed")],
         ]
-    if field in {"post_registration_text", "room", "venue_details", "expected_attendance"}:
+    if field in {
+        "post_registration_text",
+        "room",
+        "venue_details",
+        "expected_attendance",
+        "public_contact",
+    }:
         rows.append([("Пропустить", f"evchoice:{token}:skip")])
     if field == "registration_deadline":
         rows.append([("До начала встречи", f"evchoice:{token}:default")])
@@ -326,7 +354,12 @@ def _parse(field, raw, event):
         if raw not in {"yes", "no", "Да", "Нет"}:
             raise ValidationError("Выбери «Да» или «Нет».")
         return raw in {"yes", "Да"}
-    if raw == "skip" and field in {"post_registration_text", "room", "venue_details"}:
+    if raw == "skip" and field in {
+        "post_registration_text",
+        "room",
+        "venue_details",
+        "public_contact",
+    }:
         return None if field == "room" else ""
     return raw
 
@@ -379,6 +412,9 @@ async def handle_events(
     session, user_id: int, state: Conversation, message: Message | None, data: str, settings
 ) -> Screen | None:
     service = EventService(session)
+    calendar_screen = await handle_user_calendar(session, user_id, state, data)
+    if calendar_screen is not None:
+        return calendar_screen
     data = {"future:events": "events", "future:mine": "my_events"}.get(data, data)
     if data in {"events", "my_events"} or data.startswith(
         ("eventsweek:", "eventnew:", "eventlist:", "eventdrafts:")
@@ -438,39 +474,6 @@ async def handle_events(
         if state.state != "event_edit" or token != state.payload.get("token"):
             raise ValidationError("Эта кнопка устарела. Открой актуальную карточку.")
         return await _edit_value(service, user_id, state, value)
-    if data == "my_events":
-        events = await service.my_events(user_id)
-        rows = [[(e["title"], f"event:{e['public_id']}")] for e in events]
-        rows.append([(legacy.text("back"), "menu")])
-        return _screen(legacy.text("my_events_list"), rows)
-    if data == "events" or data.startswith("eventsweek:"):
-        week = int(data.split(":")[1]) if data.startswith("eventsweek:") else 0
-        if not -260 <= week <= 260:
-            raise ValidationError("Неделя вне доступного диапазона.")
-        now = datetime.now(MOSCOW)
-        start = (
-            now.replace(hour=0, minute=0, second=0, microsecond=0)
-            - timedelta(days=now.weekday())
-            + timedelta(weeks=week)
-        )
-        end = start + timedelta(days=7)
-        events = await service.public_events(start, end)
-        rows = [
-            [(f"{_date_text(e['starts_at'])} · {e['title']}", f"event:{e['public_id']}")]
-            for e in events
-        ]
-        rows += [
-            [
-                ("← Неделя", f"eventsweek:{week - 1}"),
-                ("Эта неделя", "events"),
-                ("Неделя →", f"eventsweek:{week + 1}"),
-            ],
-            [(legacy.text("back"), "menu")],
-        ]
-        text = legacy.text("events_list") + f"\n{start:%d.%m}–{end - timedelta(days=1):%d.%m.%Y}"
-        if not events:
-            text += "\n\nНа этой неделе открытых встреч пока нет."
-        return _screen(text, rows)
     if data.startswith("event:"):
         parts = data.split(":")
         _reset(state)

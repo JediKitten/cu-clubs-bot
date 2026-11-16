@@ -122,6 +122,8 @@ class IdentityService:
             raise ValidationError("Неизвестная категория.")
         person = await self._lock_person(telegram_id)
         if category in {"student", "staff"}:
+            if self.session.info.get("yandex_auth_enabled"):
+                raise ValidationError("Подтверди университетскую почту через Яндекс.")
             name = normalize_name(full_name if full_name is not None else person.full_name)
             login = normalize_login(
                 time_login if time_login is not None else person.time_login or ""

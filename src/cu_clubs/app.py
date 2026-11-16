@@ -104,4 +104,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     from cu_clubs.api import install_api
 
     install_api(app, config)
+    from cu_clubs.yandex_routes import install_yandex
+
+    install_yandex(app, config)
     return app

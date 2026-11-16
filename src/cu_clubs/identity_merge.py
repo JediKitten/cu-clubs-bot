@@ -4,7 +4,7 @@ from sqlalchemy import delete, select, update
 from sqlalchemy.dialects.postgresql import insert
 
 from cu_clubs.event_models import Event, Registration, RegistrationHistory
-from cu_clubs.identity_models import EmailChallenge
+from cu_clubs.identity_models import EmailChallenge, YandexIdentity
 from cu_clubs.models import Audit, GlobalAdmin, Membership, Person, Subscription, TelegramAccount
 
 
@@ -117,6 +117,9 @@ async def merge_into_imported(session, old, canonical, actor):
     )
     await session.execute(
         update(EmailChallenge).where(EmailChallenge.person_id == old_id).values(person_id=new_id)
+    )
+    await session.execute(
+        update(YandexIdentity).where(YandexIdentity.person_id == old_id).values(person_id=new_id)
     )
     await session.execute(
         update(TelegramAccount).where(TelegramAccount.person_id == old_id).values(person_id=new_id)

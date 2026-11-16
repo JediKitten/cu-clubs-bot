@@ -36,3 +36,26 @@ class EmailChallenge(Base):
     consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     invalidated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class YandexChallenge(Base):
+    __tablename__ = "yandex_challenges"
+    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    telegram_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    full_name: Mapped[str] = mapped_column(String(300))
+    category: Mapped[str] = mapped_column(String(20))
+    status: Mapped[str] = mapped_column(String(20), default="new")
+    state_digest: Mapped[str | None] = mapped_column(String(64), unique=True)
+    browser_digest: Mapped[str | None] = mapped_column(String(64))
+    subject: Mapped[str | None] = mapped_column(String(100))
+    email: Mapped[str | None] = mapped_column(String(254))
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class YandexIdentity(Base):
+    __tablename__ = "yandex_identities"
+    subject: Mapped[str] = mapped_column(String(100), primary_key=True)
+    person_id: Mapped[UUID] = mapped_column(ForeignKey("people.id"), unique=True)
+    email: Mapped[str] = mapped_column(String(254), unique=True)
+    verified_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

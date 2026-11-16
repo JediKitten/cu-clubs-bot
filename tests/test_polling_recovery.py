@@ -129,7 +129,8 @@ def test_unexpected_text_keeps_the_active_screen(runtime_database_url):
                     }
                 ),
             )
-            assert bot.sent[-1].text == "Профиль клуба"
+            # Every screen now has owner-supplied artwork; visible text is its caption.
+            assert bot.sent[-1].caption == "Профиль клуба"
             assert (
                 bot.sent[-1].reply_markup.inline_keyboard[0][0].callback_data == "editmenu:cinema"
             )

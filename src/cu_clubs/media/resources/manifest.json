@@ -1,0 +1,125 @@
+{
+  "version": 1,
+  "assets": {
+    "admin": {
+      "file": "admin.png",
+      "sha256": "74282422721f13eaab05e3f0a2035785b4521d79b94bc7bfa7f422056be95a56",
+      "bytes": 440916
+    },
+    "analytics": {
+      "file": "analytics.png",
+      "sha256": "c4b80430fe7bc59630aa94c2bea290822fbfc96d3e7610253215c0177805e894",
+      "bytes": 203842
+    },
+    "api": {
+      "file": "api.png",
+      "sha256": "2509466819d00137669f9fa43935491ffbcfe6c0acd4eb96cabef907a73097cc",
+      "bytes": 531289
+    },
+    "api_clients": {
+      "file": "api_clients.png",
+      "sha256": "431a6e79be035d5c7ae8e1cf9b5cc9c4b4e19e71a67cd9e13e7f0f49696d17b3",
+      "bytes": 369544
+    },
+    "attendance": {
+      "file": "attendance.png",
+      "sha256": "d7acad46516677b1c026cca8f40fdd3fed489b9cdb69cca5b4b0650ffabcdba3",
+      "bytes": 571430
+    },
+    "auth": {
+      "file": "auth.png",
+      "sha256": "4c434406f4fc86c6dcd9d6bba9b2f49a21808c9dc40e8c41a1cfc05cbf177552",
+      "bytes": 1893997
+    },
+    "calendar": {
+      "file": "calendar.png",
+      "sha256": "a450094ed270335c12e0f123fdde4eba4e88411f364606db702f3c9ddcdf371a",
+      "bytes": 694766
+    },
+    "club-owner": {
+      "file": "club-owner.png",
+      "sha256": "6d46efd49043febc84fe10ea6654a0659a4eafa9d1c01a682654456d8f5a13c5",
+      "bytes": 4029462
+    },
+    "club_settings": {
+      "file": "club_settings.png",
+      "sha256": "0c739b98eb1a66897b6dfc9909959d515b82fc72edcd1c8153c6d6a0ae81fb31",
+      "bytes": 464347
+    },
+    "club_team": {
+      "file": "club_team.png",
+      "sha256": "e7f98da8d99b9387c68c5b3baf0e2ed90547f16db8933b0490639ef1aacba2ec",
+      "bytes": 257931
+    },
+    "clubs": {
+      "file": "clubs.png",
+      "sha256": "6f388b60d2b68117223b4ae2efb9e36ccab1707c3568a60b236817aaef9e8797",
+      "bytes": 1601044
+    },
+    "collaboration": {
+      "file": "collaboration.png",
+      "sha256": "41e95e406e0e41a1bd92cfa2bb2637f0d841e61dae596c66449f1ecaa18d38c2",
+      "bytes": 490530
+    },
+    "digest": {
+      "file": "digest.png",
+      "sha256": "3a1af3aa8b9302c886e6bce8097d8eb83bba1afb504aed7d7dcf8d0dd13cd9ad",
+      "bytes": 862289
+    },
+    "event_create": {
+      "file": "event_create.png",
+      "sha256": "c706831889af379e612d1cb6160837e8698cef79d264f885765f2d99333e8da1",
+      "bytes": 414246
+    },
+    "events": {
+      "file": "events.png",
+      "sha256": "72f23b28ba6291e6fe48f32ba578501bd5c6b6b1c0f3ade0ddb69e73765420ca",
+      "bytes": 2136710
+    },
+    "faq": {
+      "file": "faq.png",
+      "sha256": "e4b3a6460e9aedee7024251d10dafd66b9178a390315c1abc2ca2422cc749b98",
+      "bytes": 543526
+    },
+    "menu": {
+      "file": "menu.png",
+      "sha256": "e5d774adf5983175ba633428a4d98e7486c843265e10f7eed77eea0ff94c400d",
+      "bytes": 1620503
+    },
+    "my_events": {
+      "file": "my_events.png",
+      "sha256": "fdcc8cbdd7718deca51118c9f302b00d87bf1e80dece5884b6b3b874077af86a",
+      "bytes": 316606
+    },
+    "notifications": {
+      "file": "notifications.png",
+      "sha256": "861128b0f69675de55616e3caf090744e0926bcae55e4f1ae620562f588df2ef",
+      "bytes": 688264
+    },
+    "personal-account": {
+      "file": "personal-account.png",
+      "sha256": "e973a7e4bade2a88924b2b50b1c1697394bf55d8ae1502cce6f5755ecc7c63ba",
+      "bytes": 1229862
+    },
+    "rosters": {
+      "file": "rosters.png",
+      "sha256": "3c56ece60bf756ea3a35da3545aaa54e8f543b358ac9f8fc136c7bb480f1e0fe",
+      "bytes": 732397
+    },
+    "survey_answer": {
+      "file": "survey_answer.png",
+      "sha256": "a17e84097d2f3f2f3fa7c1cfc7af4cc4abb8413cb327bdb75b419c0a68af6db9",
+      "bytes": 731599
+    },
+    "survey_builder": {
+      "file": "survey_builder.png",
+      "sha256": "873222b08fb3eeac217c43a29f3326e8100725c37bcb4db0dcea54f32f4ba5c0",
+      "bytes": 259309
+    },
+    "templates": {
+      "file": "templates.png",
+      "sha256": "d398d41d1293d30acb85ca27a4f7d0a218d8cab2550c7c7ce9560c24905eae35",
+      "bytes": 561346
+    }
+  }
+}

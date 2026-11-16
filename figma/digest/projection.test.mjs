@@ -58,3 +58,13 @@ test('preserves leap day and zero-event days', () => {
   assert.equal(projectWeek(snapshot([])).days.length, 7);
   assert.ok(projectWeek(snapshot([])).days.every(d => d.count === 0));
 });
+
+test('accepts optional empty room from real bot export, rejects invalid room data', () => {
+  for (const room of ['', '   ', null, undefined]) {
+    const result = projectWeek(snapshot([event('optional', '2026-11-09T10:00:00Z', { room })]));
+    assert.equal(result.days[0].rows[0].room, '');
+  }
+  for (const room of [42, {}, 'x'.repeat(1001)]) {
+    assert.throws(() => projectWeek(snapshot([event('bad-room', '2026-11-09T10:00:00Z', { room })])), /место/);
+  }
+});

@@ -3,7 +3,7 @@ html,body{margin:0;padding:0;background:var(--figma-color-bg);color:var(--figma-
 fig-content{display:block;padding:16px}fig-field{display:block;margin-bottom:14px}fig-field>label{display:block;margin-bottom:6px}fig-footer{display:flex;gap:8px;padding:12px 16px;border-top:1px solid var(--figma-color-border)}
 .note,#selection,#status,#preview{line-height:1.5;white-space:pre-wrap}.note{color:var(--figma-color-text-secondary);margin-bottom:14px}#status{padding:0 16px 12px}input[type=file]{max-width:100%}.row{display:flex;align-items:center;gap:8px;margin-bottom:12px}#preview{margin:12px 0}fig-input-text{width:100%}
 </style></head><body><div id="plugin-root"><fig-content>
-<strong>Клубная часть дайджеста</strong><p class="note">1. В CU Clubs: Админ-меню → Создать дайджест → скачать файл.
+<strong>Клубная часть дайджеста</strong><p class="note">1. В CU Clubs: Админ-меню → Создать дайджест → Карточки · файл для Figma.
 2. Выдели обложку и страницы одного выпуска 1200×1500.
 3. Загрузи файл, проверь и создай копию.</p>
 <div id="selection" role="status"></div>
@@ -20,7 +20,8 @@ try{localStorage.getItem('x')}catch(e){const m=new Map();Object.defineProperty(w
 const $=id=>document.getElementById(id),post=message=>parent.postMessage({pluginMessage:message},'*');let selected=false,valid=false,working=false;
 function checked(id){const n=$(id);return n.checked===true||n.value===true||n.value==='true'}
 function raw(){return String($('data').value||'')}
-function sync(){ $('check').disabled=working||!selected||!raw();$('run').disabled=working||!valid||!selected; }
+function disable(id,value){const n=$(id);n.disabled=value;n.toggleAttribute('disabled',value)}
+function sync(){disable('check',working||!selected||!raw());disable('run',working||!valid||!selected)}
 function invalidate(){valid=false;$('preview').textContent='';sync()}
 $('file').addEventListener('change',async e=>{invalidate();const f=e.target.files[0];if(!f)return;if(f.size>1048576){$('status').textContent='Файл больше 1 МБ.';return}$('data').value=await f.text();$('status').textContent='Файл загружен. Нажми «Проверить».';sync()});
 $('data').addEventListener('change',invalidate);

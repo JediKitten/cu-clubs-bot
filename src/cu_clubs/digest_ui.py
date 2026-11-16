@@ -1,5 +1,6 @@
 """Durable administrator selection, preview and explicitly requested JSON export."""
 
+import json
 from copy import deepcopy
 from datetime import datetime, timedelta
 from html import escape
@@ -7,7 +8,7 @@ from uuid import uuid4
 
 from aiogram.types import BufferedInputFile
 
-from cu_clubs.digest import MAX_EVENTS, MOSCOW, DigestService, week_bounds
+from cu_clubs.digest import MAX_EVENTS, MOSCOW, DigestService, render_post, week_bounds
 from cu_clubs.services import ValidationError
 from cu_clubs.ui_common import Screen, keyboard
 
@@ -87,7 +88,8 @@ async def _preview(service, actor, state, notice="", page=0):
             ],
         )
     if selected:
-        rows.insert(0, [("Скачать JSON для Figma", _callback(state, "export"))])
+        rows.insert(0, [("Карточки · файл для Figma", _callback(state, "export"))])
+        rows.insert(0, [("Текст поста", _callback(state, "post:0"))])
     return _screen("\n\n".join(filter(None, lines)), rows)
 
 
@@ -208,8 +210,8 @@ async def handle_digest(session, user_id, state, message, data, settings):
         except ValueError:
             raise ValidationError("Страница недоступна.") from None
         return await _preview(service, user_id, state, page=page)
-    if action == "export":
-        if state.payload.get("view") != "preview" or not state.payload["selected"]:
+    if action == "export" or action.startswith("post:") or action == "postfile":
+        if state.payload.get("view") not in {"preview", "post"} or not state.payload["selected"]:
             raise ValidationError("Сначала проверь предпросмотр и выбери встречи.")
         try:
             encoded, fresh = await service.snapshot(
@@ -229,7 +231,59 @@ async def handle_digest(session, user_id, state, message, data, settings):
                 "Встречи изменились или стали недоступны. "
                 "Проверь обновлённый предпросмотр и подтверди экспорт ещё раз.",
             )
+        if action != "export":
+            html, _, pages = render_post(json.loads(encoded))
+            try:
+                page = (
+                    int(action.split(":")[1])
+                    if action.startswith("post:")
+                    else state.payload.get("post_page", 0)
+                )
+            except ValueError:
+                raise ValidationError("Страница недоступна.") from None
+            if page < 0 or page >= max(1, len(pages)):
+                raise ValidationError("Страница недоступна.")
+            state.payload["view"] = "post"
+            state.payload["post_page"] = page
+            rows = []
+            if len(pages) > 1:
+                rows.append(
+                    [
+                        (label, _callback(state, f"post:{target}"))
+                        for label, target in [
+                            ("Предыдущая часть", page - 1),
+                            ("Следующая часть", page + 1),
+                        ]
+                        if 0 <= target < len(pages)
+                    ]
+                )
+            rows += [
+                [("Скачать пост целиком", _callback(state, "postfile"))],
+                [("Карточки · файл для Figma", _callback(state, "export"))],
+                [("Назад", _callback(state, "preview"))],
+            ]
+            screen = _screen(
+                pages[page] if pages else "Пост слишком длинный для сообщения. Скачай полный файл.",
+                rows,
+            )
+            if action == "postfile" or not pages:
+                content = (
+                    '<!doctype html><html lang="ru"><meta charset="utf-8">'
+                    "<title>Дайджест событий</title>"
+                    '<body style="white-space:pre-wrap;font:16px sans-serif">'
+                    + html
+                    + "</body></html>"
+                )
+                screen.document = BufferedInputFile(
+                    content.encode(), filename=f"cu-clubs-post-{state.payload['week']}.html"
+                )
+            return screen
         screen = await _preview(service, user_id, state)
+        screen.text += (
+            "\n\nФайл содержит данные для карточек. Загрузи его в плагин "
+            "«CU Clubs · Дайджест» в Figma и создай копию макета. "
+            "Текст поста доступен отдельной кнопкой."
+        )
         screen.document = BufferedInputFile(
             encoded, filename=f"cu-clubs-digest-{state.payload['week']}.json"
         )

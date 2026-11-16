@@ -65,6 +65,7 @@ class Event(Base):
     title: Mapped[str] = mapped_column(String(150), default="", server_default="")
     description: Mapped[str] = mapped_column(Text, default="", server_default="")
     post_registration_text: Mapped[str] = mapped_column(Text, default="", server_default="")
+    public_contact: Mapped[str] = mapped_column(String(300), default="", server_default="")
     status: Mapped[str] = mapped_column(String(30), default="draft", server_default="draft")
     visibility: Mapped[str] = mapped_column(String(10), default="open", server_default="open")
     starts_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

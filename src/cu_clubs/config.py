@@ -35,6 +35,10 @@ class Settings(BaseSettings):
     bootstrap_leader_telegram_id: PositiveInt | None = None
     test_allow_unverified_leaders: bool = False
     test_self_registration_enabled: bool = False
+    yandex_auth_enabled: bool = False
+    yandex_client_id: str | None = None
+    yandex_client_secret: SecretStr | None = None
+    yandex_redirect_uri: str | None = None
 
     external_delivery_enabled: bool = False
     telegram_bot_token: SecretStr | None = None
@@ -94,6 +98,24 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_delivery_credentials(self) -> Self:
+        if self.yandex_auth_enabled:
+            from urllib.parse import urlsplit
+
+            redirect = urlsplit(self.yandex_redirect_uri or "")
+            if (
+                not self.yandex_client_id
+                or not self.yandex_client_secret
+                or not self.verification_secret
+                or len(self.verification_secret.get_secret_value()) < 32
+                or redirect.scheme != "https"
+                or not redirect.hostname
+                or redirect.username
+                or redirect.query
+                or redirect.fragment
+                or redirect.path != "/auth/yandex/callback"
+                or not self.telegram_bot_username
+            ):
+                raise ValueError("Yandex login requires credentials, secret and HTTPS callback")
         if self.test_self_registration_enabled and self.environment != "test":
             raise ValueError("Self registration is allowed only in the test environment")
         if self.test_allow_unverified_leaders and self.environment != "test":

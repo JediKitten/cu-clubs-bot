@@ -194,7 +194,9 @@ async def _auth_success(session, user_id, state, settings):
 
 async def handle_identity(session, user_id, state, message, data, settings, person=None):
     """Return a screen when this flow owns an action, otherwise leave it untouched."""
-    temporary = self_registration_enabled(session)
+    temporary = self_registration_enabled(session) and not getattr(
+        settings, "yandex_auth_enabled", False
+    )
     if temporary and (data.startswith("auth") or state.state.startswith("auth_")):
         from cu_clubs.category_ui import begin_category
 
@@ -232,6 +234,11 @@ async def handle_identity(session, user_id, state, message, data, settings, pers
             if verified and person.get("kind") == "student"
             else None,
         )
+        if getattr(settings, "yandex_auth_enabled", False) and verified:
+            category = person.get("declared_category")
+            if category == "staff":
+                text = text.replace("<b>студент</b>", "<b>сотрудник</b>")
+            text += "\n\nКатегория: " + escape(CATEGORIES.get(category, "Студент"))
         rows = []
         rows.append([("Мой QR", "aqpersonal")])
         rows.append([("Подключённые боты", "apigrants")])

@@ -1,0 +1,57 @@
+# Автоматическое предложение выпуска self-service
+
+Пакет исходников 16 ноября 2026. `scripts/deliver_selfservice.py` заменяет
+перешифрование всех Actions Secrets при каждом выпуске: он переиспользует
+существующую доставку из проверенного `master` платформы.
+
+Фиксированы источник `Jedi_kitten/cu-clubs-bot`, проект `cu-clubs-bot`, окружение
+`test`, приложение `api` и путь `deployments/cu-clubs-bot/test/api.yaml`.
+Единственные изменения — tag полного 40-символьного lowercase SHA текущего
+исходного job и необязательный `env.SELF_SERVICE_WORKER_ENABLED`.
+
+- Actions Variable `SELF_SERVICE_WORKER_ENABLED`: пусто — сохранить текущее
+  значение; `true`/`false` — явное изменение только этого объявленного ключа.
+  Другие значения отклоняются. Это не команда остановки старого worker:
+  переключение на `true` выполняют после остановки старых процессов и сверки БД.
+- Все `sealedEnv` и остальные `env` сохраняются с теми же строковыми значениями.
+  Секреты приложения не извлекаются из Actions, не расшифровываются и не
+  перешифровываются. Единственная credential job — `DELIVERY_TOKEN` из
+  `SELF_SERVICE_DELIVERY_TOKEN`, только в окружении процесса, без аргумента CLI.
+- Job `deliver` работает после `publish` и только при
+  `SELF_SERVICE_DELIVERY_READY=='true'`, source `push`/`workflow_dispatch`,
+  source repository и основной ветке `main`. PR-events исключены также
+  собственными проверками helper. `check` и `publish` этим пакетом не меняются.
+
+Job вручную получает точный исходный SHA и отдельный текущий snapshot
+`cu3rd/self-service:master`, без сохранённых git credentials. Зависимости
+PyYAML/jsonschema устанавливаются по закреплённому platform requirements
+во временную папку вне checkout. Чистота обоих checkout, origin, source SHA,
+событие и default branch проверяются до обращения к конфигурации.
+
+Helper сравнивает revision платформы с API `master`, использует её собственный
+`validate_delivery`, unique-key YAML loader и штатный `provenance(path, content)`
+из `scripts/deploy.py`. Первая сверка blob/content привязана к точной revision;
+данные валидируются до и после изменения. При полном совпадении не запрашивается
+OIDC и не создаются ветка/PR. Для изменения обязательна OIDC provenance,
+привязанная к точным пути и строке содержимого. Job включает
+`enable-openid-connect: true`.
+
+Ветка создаётся от той же revision после повторной сверки master; перед PUT
+проверяются её HEAD и исходный blob SHA. Запись использует этот old SHA, после
+неё проверяются полученный commit и точное содержимое, затем ещё раз master.
+Создаётся обычный PR в защищённый master, без merge API или обхода review.
+Решение о штатном автоматическом принятии остаётся платформе. При обнаружении
+гонки после создания ветки/записи PR не открывается; уже сделанная одиночная
+мутация автоматически не повторяется. Перед новым запуском следует проверить
+состояние оставшейся ветки. Только сетевые GET повторяются ограниченно.
+Ответы с содержимым конфигурации, токены и provenance в лог не печатаются.
+
+Локально: **47 unit tests прошли без пропусков**, без сетевых API-операций.
+Проверены неизменность семи ciphertext и прочих env, допустимые worker flags,
+источник/события/ветка/full SHA, no-op, OIDC requirement, гонки master/branch/blob,
+ограниченные read retries и отсутствие секретов в ошибках. Ruff прошёл.
+Отдельный offline smoke с настоящими platform scripts и закреплёнными
+зависимостями на локальном checkout `ba18ab00b1eae1816aae4de90e775be200986bb3`
+подтвердил `validate_delivery` и YAML round trip: семь sealed-полей и пятнадцать
+env сохранены. Это не проверка актуального HTTP master и не live-запуск job:
+реальный API, OIDC, открытие PR и деплой из этого helper не вызывались.

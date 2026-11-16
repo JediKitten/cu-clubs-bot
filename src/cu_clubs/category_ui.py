@@ -119,6 +119,10 @@ async def entry_origin(session, user_id, command, data, settings):
 
 
 async def category_gate(session, user_id, state, person, command, data, settings, message=None):
+    if getattr(settings, "yandex_auth_enabled", False):
+        from cu_clubs.yandex_ui import yandex_gate
+
+        return await yandex_gate(session, user_id, state, person, command, data, settings, message)
     if not self_registration_enabled(session):
         return None
     selected = bool(person.get("declared_category") and person.get("category_selected_at"))
