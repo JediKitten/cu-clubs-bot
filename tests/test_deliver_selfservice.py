@@ -205,6 +205,10 @@ def test_success_uses_exact_master_old_blob_and_provenance_content():
     mutations = [(method, path, body) for method, path, body in api.calls if method != "GET"]
     assert [method for method, _, _ in mutations] == ["POST", "PUT", "POST"]
     assert mutations[0][2]["old_ref_name"] == REVISION
+    branch = mutations[0][2]["new_branch_name"]
+    suffix = branch.removeprefix("deploy/cu-clubs-bot/test/api-")
+    assert len(suffix) == 10 and set(suffix) <= set("0123456789abcdef")
+    assert mutations[-1][2]["head"] == branch
     assert mutations[1][2]["sha"] == delivery.blob_sha(content)
     assert "synthetic-oidc-token" in mutations[-1][2]["body"]
     assert all("merge" not in unquote(path) for _, path, _ in api.calls)

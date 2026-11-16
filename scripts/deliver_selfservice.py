@@ -194,7 +194,8 @@ def propose(api, runtime, revision, old_sha, old_content, tag, worker):
     if not proof or not proof.startswith("\n\n<!-- delivery-provenance: "):
         raise Rejected("OIDC provenance is unavailable")
     _master(api, revision)
-    branch = "deploy/cu-clubs-bot/test/api-" + uuid.uuid4().hex[:12]
+    # The platform approver requires the official delivery branch's 10-hex suffix.
+    branch = "deploy/cu-clubs-bot/test/api-" + uuid.uuid4().hex[:10]
     api.call("POST", PREFIX + "/branches", {"new_branch_name": branch, "old_ref_name": revision})
     branch_path = PREFIX + "/branches/" + urllib.parse.quote(branch, safe="")
     if api.call("GET", branch_path)["commit"]["id"] != revision:
