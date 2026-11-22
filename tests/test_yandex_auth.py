@@ -328,6 +328,38 @@ def test_reauthentication_retains_origin_and_can_be_cancelled(route, origin):
     asyncio.run(scenario())
 
 
+@pytest.mark.parametrize("step", ["yandex_choice", "yandex_name", "yandex_link"])
+@pytest.mark.parametrize("route", ["menu", "profile", "auth:profile", "category:profile"])
+def test_active_flow_navigation_recovers_with_fresh_auth_buttons(step, route):
+    async def scenario():
+        state = SimpleNamespace(state=step, payload={"nonce": "previous", "resume": "profile"})
+        person = {"verified_at": None}
+        result = await yandex_gate(None, STUDENT, state, person, [], route, settings())
+        assert state.state == "yandex_choice"
+        assert state.payload["resume"] == ("menu" if route == "menu" else "profile")
+        fresh_pick = result.screen.markup.inline_keyboard[0][0].callback_data
+        await yandex_gate(None, STUDENT, state, person, [], fresh_pick, settings())
+        assert state.state == "yandex_name"
+        assert state.payload["category"] == "student"
+
+    asyncio.run(scenario())
+
+
+def test_stale_auth_button_is_rejected_but_menu_recovers():
+    async def scenario():
+        state = SimpleNamespace(
+            state="yandex_link", payload={"nonce": "current", "resume": "profile"}
+        )
+        person = {"verified_at": None}
+        with pytest.raises(ValidationError, match="Кнопка устарела"):
+            await yandex_gate(None, STUDENT, state, person, [], "ya:retry:old", settings())
+        result = await yandex_gate(None, STUDENT, state, person, [], "menu", settings())
+        assert state.state == "yandex_choice" and result.screen is not None
+        assert state.payload["nonce"] != "current"
+
+    asyncio.run(scenario())
+
+
 def test_guest_confirmation_never_grants_university_registration(sessions):
     async def scenario():
         await seed(sessions)

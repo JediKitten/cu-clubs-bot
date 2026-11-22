@@ -85,7 +85,7 @@ async def yandex_gate(session, user_id, state, person, command, data, settings, 
         return None
     auth = YandexAuth(session, settings)
     active = state.state.startswith("yandex_")
-    if data.startswith("ya:") or (active and not command):
+    if data.startswith("ya:") or (active and not command and not data):
         nonce = state.payload.get("nonce")
         if data:
             parts = data.split(":")
