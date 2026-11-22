@@ -1,5 +1,9 @@
 # UX review: admin digest export — 15 November 2026
 
+> Исторический отчёт: результаты и ограничения относятся к указанному пакету,
+> не являются новой проверкой 22 ноября. Текущее состояние —
+> [project-status.md](project-status.md), передача — [handover.md](handover.md).
+
 ## Scope and status
 
 Owner-approved workflow: admin action **«Создать дайджест»** → choose a week →
