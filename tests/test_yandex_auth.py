@@ -175,7 +175,8 @@ def test_state_cookie_expiry_cancellation_and_pkce(sessions):
     asyncio.run(scenario())
 
 
-def test_provider_requests_use_basic_auth_pkce_and_header_token_only():
+@pytest.mark.parametrize("token_extra", [{}, {"scope": "login:email"}])
+def test_provider_requests_use_basic_auth_pkce_and_header_token_only(token_extra):
     seen = []
 
     def respond(request):
@@ -183,9 +184,7 @@ def test_provider_requests_use_basic_auth_pkce_and_header_token_only():
         if request.url.path == "/token":
             assert "code_verifier=" in request.content.decode()
             assert request.headers["authorization"].startswith("Basic ")
-            return httpx.Response(
-                200, json={"access_token": "offline-access", "scope": "login:email"}
-            )
+            return httpx.Response(200, json={"access_token": "offline-access", **token_extra})
         assert request.headers["authorization"] == "OAuth offline-access"
         assert "oauth_token" not in str(request.url)
         return httpx.Response(200, json=profile())
@@ -199,6 +198,45 @@ def test_provider_requests_use_basic_auth_pkce_and_header_token_only():
         assert result == profile() and len(seen) == 2
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("scope", [None, "", "login:info", ["login:email"]])
+def test_provider_explicitly_missing_email_permission_is_rejected(scope, caplog):
+    requests = []
+
+    def respond(request):
+        requests.append(request)
+        return httpx.Response(200, json={"access_token": "PRIVATE-TOKEN", "scope": scope})
+
+    async def scenario():
+        from uuid import uuid4
+
+        result = await exchange(
+            settings(), uuid4(), "PRIVATE-CODE", transport=httpx.MockTransport(respond)
+        )
+        assert result is None and len(requests) == 1
+
+    asyncio.run(scenario())
+    assert "PRIVATE-TOKEN" not in caplog.text and "PRIVATE-CODE" not in caplog.text
+
+
+def test_provider_failure_logs_only_stage_and_status(caplog):
+    def respond(request):
+        return httpx.Response(400, json={"error_description": "PRIVATE-PROVIDER-DATA"})
+
+    async def scenario():
+        from uuid import uuid4
+
+        assert (
+            await exchange(
+                settings(), uuid4(), "PRIVATE-CODE", transport=httpx.MockTransport(respond)
+            )
+            is None
+        )
+
+    asyncio.run(scenario())
+    assert "stage=token status=400" in caplog.text
+    assert "PRIVATE-PROVIDER-DATA" not in caplog.text and "PRIVATE-CODE" not in caplog.text
 
 
 def test_callback_is_no_store_browser_bound_and_does_not_verify_until_bot(sessions, monkeypatch):

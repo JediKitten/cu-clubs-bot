@@ -245,6 +245,37 @@ class ScreenManager:
                     raise
         screen.banner_cache = cache
 
+    async def _backup_below(self, session: AsyncSession, screen: UIScreen) -> bool:
+        """A delivered backup stays in the chat; move the next screen below it."""
+        if not screen.message_id:
+            return False
+        return (
+            await session.scalar(
+                select(Outbox.id)
+                .where(
+                    Outbox.kind == "backup.ready",
+                    Outbox.recipient_telegram_id == screen.chat_id,
+                    Outbox.status == "sent",
+                    Outbox.telegram_message_id > screen.message_id,
+                )
+                .limit(1)
+            )
+            is not None
+        )
+
+    async def _retire_backup_screen(
+        self, screen: UIScreen, old_id: int | None, deleted: set[int]
+    ) -> None:
+        if old_id is None or old_id == screen.message_id or old_id in deleted:
+            return
+        try:
+            await self.bot.edit_message_reply_markup(
+                chat_id=screen.chat_id, message_id=old_id, reply_markup=None
+            )
+        except TelegramAPIError:
+            # The new screen is already sent; retiring the old keyboard is best effort.
+            pass
+
     async def send_document(self, chat_id: int, document: Any) -> None:
         """Track this window's file durably and remove it on the next navigation."""
         async with self.sessions.begin() as session:
@@ -290,6 +321,8 @@ class ScreenManager:
                     banner_cache={},
                 )
                 session.add(screen)
+            backup_below = await self._backup_below(session, screen)
+            force_new = force_new or backup_below
             original = _original_banner(photo, banner_role)
             role = banner_role if original else None
             fingerprint = hashlib.sha256(photo.data).hexdigest() if role else None
@@ -364,6 +397,8 @@ class ScreenManager:
                 trigger,
                 [item.telegram_message_id for item in notifications],
             )
+            if backup_below:
+                await self._retire_backup_screen(screen, previous_id, deleted)
             for item in notifications:
                 if item.telegram_message_id in deleted:
                     item.payload = {**item.payload, "ui_retired": True}
@@ -395,11 +430,14 @@ class ScreenManager:
                     photo = media.banner(screen.banner_role)
                 except ValueError:
                     photo = legacy.banner(screen.banner_role)
-            result = await self._render(screen, photo, screen.kind)
+            backup_below = await self._backup_below(session, screen)
+            result = await self._render(screen, photo, None if backup_below else screen.kind)
             if result is not None and not isinstance(result, bool):
                 screen.message_id = result.message_id
                 if getattr(result, "photo", None):
                     screen.photo_file_id = result.photo[-1].file_id
             await session.flush()
-            await self._cleanup(screen.chat_id, screen.message_id, old_id, callback)
+            deleted = await self._cleanup(screen.chat_id, screen.message_id, old_id, callback)
+            if backup_below:
+                await self._retire_backup_screen(screen, old_id, deleted)
         return True

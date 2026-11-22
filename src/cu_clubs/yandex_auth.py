@@ -7,6 +7,7 @@ to a secure cookie, and exchanged outside database transactions with S256 PKCE.
 import base64
 import hashlib
 import hmac
+import logging
 import re
 import secrets
 from datetime import UTC, datetime, timedelta
@@ -22,6 +23,7 @@ from cu_clubs.models import Audit
 from cu_clubs.services import ValidationError
 
 TTL = timedelta(minutes=10)
+logger = logging.getLogger(__name__)
 
 
 def digest(value):
@@ -163,6 +165,7 @@ class YandexAuth:
             raise ValidationError("Вход истёк. Начни заново в боте.")
         row.status = "failed"
         if profile is None:
+            logger.warning("Yandex sign-in rejected: provider response unavailable")
             return False
         email = profile.get("default_email")
         subject = profile.get("id")
@@ -175,6 +178,16 @@ class YandexAuth:
             or not isinstance(subject, str)
             or not re.fullmatch(r"[0-9]{1,100}", subject)
         ):
+            logger.warning(
+                "Yandex sign-in rejected: profile validation; client_matches=%s "
+                "university_email=%s subject_valid=%s",
+                profile.get("client_id") == self.settings.yandex_client_id,
+                isinstance(email, str)
+                and email == email.strip()
+                and email.lower().count("@") == 1
+                and email.lower().rsplit("@", 1)[-1] == EMAIL_DOMAIN,
+                isinstance(subject, str) and bool(re.fullmatch(r"[0-9]{1,100}", subject)),
+            )
             return False
         try:
             login = normalize_login(email)
@@ -252,6 +265,7 @@ class YandexAuth:
 async def exchange(settings, challenge_id, code, *, transport=None):
     if not code or len(code) > 2048:
         return None
+    stage = "token"
     try:
         async with httpx.AsyncClient(
             timeout=15, follow_redirects=False, transport=transport
@@ -267,12 +281,19 @@ async def exchange(settings, challenge_id, code, *, transport=None):
             )
             response.raise_for_status()
             token = response.json()
+            scope = token.get("scope")
+            # Yandex omits scope when the token has all requested permissions.
             if (
-                "login:email" not in token.get("scope", "").split()
+                (
+                    "scope" in token
+                    and (not isinstance(scope, str) or "login:email" not in scope.split())
+                )
                 or not isinstance(token.get("access_token"), str)
                 or not token["access_token"]
             ):
+                logger.warning("Yandex sign-in rejected: token permissions or format")
                 return None
+            stage = "userinfo"
             response = await client.get(
                 "https://login.yandex.ru/info",
                 params={"format": "json"},
@@ -281,5 +302,11 @@ async def exchange(settings, challenge_id, code, *, transport=None):
             response.raise_for_status()
             profile = response.json()
             return profile if isinstance(profile, dict) else None
+    except httpx.HTTPStatusError as error:
+        logger.warning(
+            "Yandex sign-in failed: stage=%s status=%s", stage, error.response.status_code
+        )
+        return None
     except (httpx.HTTPError, ValueError, TypeError, AttributeError):
+        logger.warning("Yandex sign-in failed: stage=%s", stage)
         return None

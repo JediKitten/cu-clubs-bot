@@ -5,6 +5,7 @@ import hashlib
 import os
 from html import unescape
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
@@ -96,6 +97,9 @@ class FakeBot:
     async def delete_message(self, **kwargs):
         return await self._result("delete", kwargs)
 
+    async def edit_message_reply_markup(self, **kwargs):
+        return await self._result("edit_markup", kwargs)
+
 
 @pytest.fixture
 def database_url():
@@ -134,6 +138,144 @@ def run(database_url, scenario):
 async def stored(sessions, bot_id=BOT):
     async with sessions() as session:
         return await session.get(UIScreen, (bot_id, CHAT))
+
+
+def backup_screen_manager(photo_kind, *, long=False):
+    """Real screen/rendering with a session that returns a delivered-backup match."""
+    bot = FakeBot()
+    # The old screen is 100, the delivered backup is 101, the next send is 102.
+    bot.next_id = 101
+    photo = (
+        legacy.banner("menu")
+        if photo_kind == "banner"
+        else "custom-cover"
+        if photo_kind == "custom"
+        else None
+    )
+    role = "menu" if photo_kind == "banner" else None
+    markup = InlineKeyboardMarkup(
+        inline_keyboard=[[InlineKeyboardButton(text="Back", callback_data="menu")]]
+    )
+    original_text = "Длинный текст 👋 &amp; " * 400 if long else "<b>Menu</b>"
+    cache = (
+        {"menu": {"sha256": hashlib.sha256(photo.data).hexdigest(), "file_id": "photo-file-id"}}
+        if role
+        else {}
+    )
+    screen = UIScreen(
+        bot_id=BOT,
+        chat_id=CHAT,
+        message_id=100,
+        kind="photo" if photo is not None else "text",
+        text=original_text,
+        pages=_pages(original_text, photo=photo is not None),
+        base_markup=markup.model_dump(mode="json", exclude_none=True),
+        page_index=0,
+        page_token="original-page-token",
+        photo_file_id="photo-file-id" if photo is not None else None,
+        banner_role=role,
+        banner_cache=cache,
+    )
+    session = AsyncMock()
+    session.get.return_value = screen
+    session.scalar.side_effect = [uuid4(), None]
+    session.scalars.return_value = []
+    sessions = MagicMock()
+    sessions.begin.return_value.__aenter__.return_value = session
+    manager = ScreenManager(sessions, bot)
+    manager._lock = AsyncMock()
+    return manager, screen, bot, photo, role, markup
+
+
+@pytest.mark.parametrize("photo_kind", ["text", "banner", "custom"])
+def test_first_navigation_after_backup_moves_screen_once_and_keeps_backup(photo_kind):
+    async def scenario():
+        manager, screen, bot, photo, role, markup = backup_screen_manager(photo_kind)
+        current = await manager.show(
+            CHAT, "<b>Next</b>", markup, photo, banner_role=role, trigger=callback(100)
+        )
+        send_method = "send_text" if photo is None else "send_photo"
+        edit_method = "edit_text" if photo is None else "edit_photo"
+        assert current == 102 and screen.message_id == current
+        assert [name for name, _ in bot.calls] == [send_method, "delete"]
+        assert bot.calls[-1] == ("delete", {"chat_id": CHAT, "message_id": 100})
+        assert bot.calls[0][1]["reply_markup"] == markup
+        assert bot.calls[0][1]["text" if photo is None else "caption"] == "<b>Next</b>"
+        if photo is not None:
+            assert bot.calls[0][1]["photo"] == ("photo-file-id" if role else "custom-cover")
+        assert screen.banner_role == role
+        if role:
+            assert screen.banner_cache[role]["file_id"] == "photo-file-id"
+        bot.calls.clear()
+        # A fresh manager uses the persisted pointer. No newer backup is found.
+        restarted = ScreenManager(manager.sessions, bot)
+        restarted._lock = AsyncMock()
+        assert (
+            await restarted.show(
+                CHAT, "Again", markup, photo, banner_role=role, trigger=callback(current)
+            )
+            == current
+        )
+        assert [name for name, _ in bot.calls] == [edit_method]
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("photo_kind", ["text", "banner", "custom"])
+def test_pagination_as_first_action_after_backup_moves_screen(photo_kind):
+    async def scenario():
+        manager, screen, bot, photo, role, markup = backup_screen_manager(photo_kind, long=True)
+        original_text, original_pages = screen.text, list(screen.pages)
+        original_cache = dict(screen.banner_cache)
+        assert len(screen.pages) > 2
+        assert await manager.handle_page(callback(100, data=f"screen:page:{screen.page_token}:1"))
+        send_method = "send_text" if photo is None else "send_photo"
+        edit_method = "edit_text" if photo is None else "edit_photo"
+        assert [name for name, _ in bot.calls] == [send_method, "delete"]
+        assert bot.calls[-1] == ("delete", {"chat_id": CHAT, "message_id": 100})
+        assert bot.calls[0][1]["reply_markup"].inline_keyboard[0] == markup.inline_keyboard[0]
+        assert screen.message_id == 102 and screen.page_index == 1
+        assert screen.text == original_text and screen.pages == original_pages
+        assert screen.page_token == "original-page-token" and screen.banner_role == role
+        assert screen.banner_cache == original_cache
+        bot.calls.clear()
+        assert await manager.handle_page(callback(102, data=f"screen:page:{screen.page_token}:2"))
+        assert [name for name, _ in bot.calls] == [edit_method]
+        assert screen.message_id == 102
+
+    asyncio.run(scenario())
+
+
+def test_without_new_delivered_backup_existing_screen_is_edited():
+    async def scenario():
+        manager, screen, bot, _, _, _ = backup_screen_manager("text")
+        manager.sessions.begin.return_value.__aenter__.return_value.scalar.side_effect = [None]
+        assert await manager.show(CHAT, "Next", trigger=callback(100)) == 100
+        assert [name for name, _ in bot.calls] == ["edit_text"]
+        assert screen.message_id == 100
+
+    asyncio.run(scenario())
+
+
+def test_backup_refresh_removes_old_keyboard_when_deleting_old_screen_fails():
+    async def scenario():
+        manager, screen, bot, _, _, _ = backup_screen_manager("text")
+        bot.failure = (
+            "delete",
+            TelegramBadRequest(
+                method=SendMessage(chat_id=CHAT, text="x"), message="message can't be deleted"
+            ),
+        )
+        assert await manager.show(CHAT, "Next", trigger=callback(100)) == 102
+        assert screen.message_id == 102
+        assert [name for name, _ in bot.calls] == ["send_text", "delete", "edit_markup"]
+        assert bot.calls[1] == ("delete", {"chat_id": CHAT, "message_id": 100})
+        assert bot.calls[2] == (
+            "edit_markup",
+            {"chat_id": CHAT, "message_id": 100, "reply_markup": None},
+        )
+
+    asyncio.run(scenario())
 
 
 def test_short_legacy_html_is_preserved_and_long_pages_lose_no_unicode():
